@@ -1,5 +1,4 @@
 const std = @import("std");
-const Options = @import("Options.zig");
 const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr = @import("openxr");
 const xr_util = @import("xr_util.zig");

@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const Options = @import("Options.zig");
 const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
 const c = xr_util.c;
@@ -73,9 +72,7 @@ cubeIndexBuffer: c.GLuint = 0,
 colorToDepthMap: std.AutoHashMap(u32, u32),
 clearColor: [4]f32 = .{ 0, 0, 0, 0 },
 
-pub fn create(allocator: std.mem.Allocator, options: Options) !*@This() {
-    _ = options;
-
+pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .allocator = allocator,
@@ -84,9 +81,9 @@ pub fn create(allocator: std.mem.Allocator, options: Options) !*@This() {
     return self;
 }
 
-pub fn init(allocator: std.mem.Allocator, options: Options) !GraphicsPlugin {
+pub fn init(allocator: std.mem.Allocator) !GraphicsPlugin {
     return .{
-        .ptr = try create(allocator, options),
+        .ptr = try create(allocator),
         .vtable = &vtable,
     };
 }
@@ -515,4 +512,3 @@ pub fn renderView(
 pub fn getSupportedSwapchainSampleCount(_: *anyopaque, _: xr.XrViewConfigurationView) u32 {
     return 1;
 }
-

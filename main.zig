@@ -47,7 +47,7 @@ pub fn main() !void {
         var platformPlugin = PlatformPlugin.init(options);
 
         // Create graphics API implementation.
-        var graphicsPlugin = try GraphicsPlugin.init(allocator, options);
+        var graphicsPlugin = try GraphicsPlugin.init(allocator);
         defer graphicsPlugin.deinit();
 
         // Initialize the OpenXR program.
