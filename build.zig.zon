@@ -1,0 +1,24 @@
+.{
+    .name = .hello_xr,
+    .version = "0.0.1",
+    .dependencies = .{
+        .openxr = .{
+            .url = "https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.52.zip",
+            .hash = "N-V-__8AAFPjQwB8_BR6KTRrHVq64cPpenQrApBu9vK4ZqpZ",
+        },
+        .compile_commands = .{
+            .url = "https://github.com/the-argus/zig-compile-commands/archive/70fb439897e12cae896c071717d7c9c382918689.tar.gz",
+            .hash = "zig_compile_commands-0.0.1-OZg5-ULBAABTh3NXO3WXoSUX1474ez0EouuoT2yDANhz",
+        },
+        .zbk = .{
+            .url = "git+https://github.com/ousttrue/zbk.git#3f6408ad863ce9ec7629b4e4649af130b7876231",
+            .hash = "zbk-0.0.1-6gzT3l1QKABySw-pC3tnqzSlGotNSEOk0sFyWpuSpCx5",
+        },
+        .zbk_dev = .{
+            .path = "../zbk",
+        },
+    },
+    .minimum_zig_version = "0.15.1",
+    .paths = .{""},
+    .fingerprint = 0xc11e3f7ebfabdfad,
+}

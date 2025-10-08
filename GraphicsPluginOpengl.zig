@@ -1,0 +1,518 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const Options = @import("Options.zig");
+const GraphicsPlugin = @import("GraphicsPlugin.zig");
+const xr_util = @import("xr_util.zig");
+const c = xr_util.c;
+const xr = @import("openxr");
+const CHECK_XRCMD = xr_util.CHECK_XRCMD;
+const geometry = @import("geometry.zig");
+const xr_linear = @import("xr_linear.zig");
+
+const INSTANCE_EXTENSIONS = [_][]const u8{"XR_KHR_opengl_enable"};
+
+const VertexShaderGlsl =
+    \\#version 410
+    \\
+    \\in vec3 VertexPos;
+    \\in vec3 VertexColor;
+    \\
+    \\out vec3 PSVertexColor;
+    \\
+    \\uniform mat4 ModelViewProjection;
+    \\
+    \\void main() {
+    \\   gl_Position = ModelViewProjection * vec4(VertexPos, 1.0);
+    \\   PSVertexColor = VertexColor;
+    \\}
+;
+
+const FragmentShaderGlsl =
+    \\#version 410
+    \\
+    \\in vec3 PSVertexColor;
+    \\out vec4 FragColor;
+    \\
+    \\void main() {
+    \\   FragColor = vec4(PSVertexColor, 1);
+    \\}
+;
+
+const SwapchainImageBufferNode = struct {
+    node: std.SinglyLinkedList.Node = .{},
+    imageBuffer: []xr.XrSwapchainImageOpenGLKHR = &.{},
+};
+
+const vtable = GraphicsPlugin.VTable{
+    .deinit = &destroy,
+    .getInstanceExtensions = &getInstanceExtensions,
+    .initializeDevice = &initializeDevice,
+    .getGraphicsBinding = &getGraphicsBinding,
+    .selectColorSwapchainFormat = &selectColorSwapchainFormat,
+    .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
+    .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
+    .renderView = &renderView,
+};
+
+allocator: std.mem.Allocator,
+window: c.ksGpuWindow = .{},
+graphicsBinding: xr_util.GetGraphicsBindingType(builtin.target) = .{},
+
+swapchainImageBufferList: std.SinglyLinkedList = .{},
+
+swapchainFramebuffer: c.GLuint = 0,
+program: c.GLuint = 0,
+modelViewProjectionUniformLocation: c.GLint = 0,
+vertexAttribCoords: c.GLuint = 0,
+vertexAttribColor: c.GLuint = 0,
+vao: c.GLuint = 0,
+cubeVertexBuffer: c.GLuint = 0,
+cubeIndexBuffer: c.GLuint = 0,
+
+// Map color buffer to associated depth buffer. This map is populated on demand.
+colorToDepthMap: std.AutoHashMap(u32, u32),
+clearColor: [4]f32 = .{ 0, 0, 0, 0 },
+
+pub fn create(allocator: std.mem.Allocator, options: Options) !*@This() {
+    _ = options;
+
+    const self = try allocator.create(@This());
+    self.* = .{
+        .allocator = allocator,
+        .colorToDepthMap = std.AutoHashMap(u32, u32).init(allocator),
+    };
+    return self;
+}
+
+pub fn init(allocator: std.mem.Allocator, options: Options) !GraphicsPlugin {
+    return .{
+        .ptr = try create(allocator, options),
+        .vtable = &vtable,
+    };
+}
+
+pub fn destroy(_self: *anyopaque) void {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    self.colorToDepthMap.deinit();
+    std.log.debug("#### GraphicsPluginOpengl.deinit ####", .{});
+    {
+        var current = self.swapchainImageBufferList.first;
+        while (current) |p| {
+            std.log.debug("destroy list node", .{});
+            current = p.next;
+            const node: *SwapchainImageBufferNode = @fieldParentPtr("node", p);
+            self.allocator.free(node.imageBuffer);
+            self.allocator.destroy(node);
+        }
+    }
+    self.allocator.destroy(self);
+}
+
+//     ~OpenGLGraphicsPlugin() override {
+//         if (m_swapchainFramebuffer != 0) {
+//             glDeleteFramebuffers(1, &m_swapchainFramebuffer);
+//         }
+//         if (m_program != 0) {
+//             glDeleteProgram(m_program);
+//         }
+//         if (m_vao != 0) {
+//             glDeleteVertexArrays(1, &m_vao);
+//         }
+//         if (m_cubeVertexBuffer != 0) {
+//             glDeleteBuffers(1, &m_cubeVertexBuffer);
+//         }
+//         if (m_cubeIndexBuffer != 0) {
+//             glDeleteBuffers(1, &m_cubeIndexBuffer);
+//         }
+//
+//         for (auto& colorToDepth : m_colorToDepthMap) {
+//             if (colorToDepth.second != 0) {
+//                 glDeleteTextures(1, &colorToDepth.second);
+//             }
+//         }
+//
+//         ksGpuWindow_Destroy(&window);
+//     }
+
+pub fn getInstanceExtensions(_: *anyopaque) []const []const u8 {
+    return &INSTANCE_EXTENSIONS;
+}
+
+// #if !defined(XR_USE_PLATFORM_MACOS)
+//     void DebugMessageCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message) {
+//         (void)source;
+//         (void)type;
+//         (void)id;
+//         (void)severity;
+//         Log::Write(Log::Level::Info, "GL Debug: " + std::string(message, 0, length));
+//     }
+// #endif  // !defined(XR_USE_PLATFORM_MACOS)
+
+pub fn initializeDevice(_self: *anyopaque, instance: xr.XrInstance, systemId: xr.XrSystemId) bool {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    // Extension function must be loaded by name
+    var pfnGetOpenGLGraphicsRequirementsKHR: xr.PFN_xrGetOpenGLGraphicsRequirementsKHR = null;
+    CHECK_XRCMD(xr.xrGetInstanceProcAddr(
+        instance,
+        "xrGetOpenGLGraphicsRequirementsKHR",
+        &pfnGetOpenGLGraphicsRequirementsKHR,
+    )) catch {
+        return false;
+    };
+
+    var graphicsRequirements = xr.XrGraphicsRequirementsOpenGLKHR{
+        .type = xr.XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR,
+    };
+    CHECK_XRCMD(pfnGetOpenGLGraphicsRequirementsKHR.?(instance, systemId, &graphicsRequirements)) catch {
+        return false;
+    };
+
+    // Initialize the gl extensions. Note we have to open a window.
+    var driverInstance = c.ksDriverInstance{};
+    var queueInfo = c.ksGpuQueueInfo{};
+    const colorFormat = c.KS_GPU_SURFACE_COLOR_FORMAT_B8G8R8A8;
+    const depthFormat = c.KS_GPU_SURFACE_DEPTH_FORMAT_D24;
+    const sampleCount = c.KS_GPU_SAMPLE_COUNT_1;
+    if (!c.ksGpuWindow_Create(
+        &self.window,
+        &driverInstance,
+        &queueInfo,
+        0,
+        colorFormat,
+        depthFormat,
+        sampleCount,
+        640,
+        480,
+        false,
+    )) {
+        xr_util.my_panic("Unable to create GL context", .{});
+    }
+
+    var major: c_int = 0;
+    var minor: c_int = 0;
+    c.glGetIntegerv(c.GL_MAJOR_VERSION, &major);
+    c.glGetIntegerv(c.GL_MINOR_VERSION, &minor);
+
+    const desiredApiVersion = xr.XR_MAKE_VERSION(
+        @as(i64, @intCast(major)),
+        @as(i64, @intCast(minor)),
+        0,
+    );
+    if (graphicsRequirements.minApiVersionSupported > desiredApiVersion) {
+        xr_util.my_panic("Runtime does not support desired Graphics API and/or version", .{});
+    }
+
+    if (builtin.target.os.tag == .windows) {
+        self.graphicsBinding = .{
+            .type = xr.XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR,
+            .hDC = @ptrCast(self.window.context.hDC),
+            .hGLRC = @ptrCast(self.window.context.hGLRC),
+        };
+    } else {
+        xr_util.my_panic("initializeDevice: not impl");
+    }
+    // #elif defined(XR_USE_PLATFORM_XLIB)
+    //         m_graphicsBinding.xDisplay = window.context.xDisplay;
+    //         m_graphicsBinding.visualid = window.context.visualid;
+    //         m_graphicsBinding.glxFBConfig = window.context.glxFBConfig;
+    //         m_graphicsBinding.glxDrawable = window.context.glxDrawable;
+    //         m_graphicsBinding.glxContext = window.context.glxContext;
+    // #elif defined(XR_USE_PLATFORM_XCB)
+    //         // TODO: Still missing the platform adapter, and some items to make this usable.
+    //         m_graphicsBinding.connection = window.connection;
+    //         // m_graphicsBinding.screenNumber = window.context.screenNumber;
+    //         // m_graphicsBinding.fbconfigid = window.context.fbconfigid;
+    //         m_graphicsBinding.visualid = window.context.visualid;
+    //         m_graphicsBinding.glxDrawable = window.context.glxDrawable;
+    //         // m_graphicsBinding.glxContext = window.context.glxContext;
+    // #elif defined(XR_USE_PLATFORM_WAYLAND)
+    //         // TODO: Just need something other than NULL here for now (for validation).  Eventually need
+    //         //       to correctly put in a valid pointer to an wl_display
+    //         m_graphicsBinding.display = reinterpret_cast<wl_display*>(0xFFFFFFFF);
+    // #elif defined(XR_USE_PLATFORM_MACOS)
+    // #error OpenGL bindings for Mac have not been implemented
+    // #else
+    // #error Platform not supported
+    // #endif
+
+    if (builtin.target.os.tag != .macos) {
+        // #if !defined(XR_USE_PLATFORM_MACOS)
+        c.glEnable(c.GL_DEBUG_OUTPUT);
+        //         glDebugMessageCallback(
+        //             [](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message,
+        //                const void* userParam) {
+        //                 ((OpenGLGraphicsPlugin*)userParam)->DebugMessageCallback(source, type, id, severity, length, message);
+        //             },
+        //             this);
+    }
+
+    self.initializeResources();
+
+    return true;
+}
+
+fn initializeResources(self: *@This()) void {
+    c.glGenFramebuffers(1, &self.swapchainFramebuffer);
+
+    const vertexShader = c.glCreateShader(c.GL_VERTEX_SHADER);
+
+    c.glShaderSource(vertexShader, 1, &&VertexShaderGlsl[0], null);
+    c.glCompileShader(vertexShader);
+    checkShader(vertexShader);
+
+    const fragmentShader = c.glCreateShader(c.GL_FRAGMENT_SHADER);
+    c.glShaderSource(fragmentShader, 1, &&FragmentShaderGlsl[0], null);
+    c.glCompileShader(fragmentShader);
+    checkShader(fragmentShader);
+
+    self.program = c.glCreateProgram();
+    c.glAttachShader(self.program, vertexShader);
+    c.glAttachShader(self.program, fragmentShader);
+    c.glLinkProgram(self.program);
+    checkProgram(self.program);
+
+    c.glDeleteShader(vertexShader);
+    c.glDeleteShader(fragmentShader);
+
+    self.modelViewProjectionUniformLocation = @intCast(c.glGetUniformLocation(self.program, "ModelViewProjection"));
+
+    self.vertexAttribCoords = @intCast(c.glGetAttribLocation(self.program, "VertexPos"));
+    self.vertexAttribColor = @intCast(c.glGetAttribLocation(self.program, "VertexColor"));
+
+    c.glGenBuffers(1, &self.cubeVertexBuffer);
+    c.glBindBuffer(c.GL_ARRAY_BUFFER, self.cubeVertexBuffer);
+    c.glBufferData(
+        c.GL_ARRAY_BUFFER,
+        @sizeOf(@TypeOf(geometry.c_cubeVertices)),
+        &geometry.c_cubeVertices[0],
+        c.GL_STATIC_DRAW,
+    );
+
+    c.glGenBuffers(1, &self.cubeIndexBuffer);
+    c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, self.cubeIndexBuffer);
+    c.glBufferData(
+        c.GL_ELEMENT_ARRAY_BUFFER,
+        @sizeOf(@TypeOf(geometry.c_cubeIndices)),
+        &geometry.c_cubeIndices[0],
+        c.GL_STATIC_DRAW,
+    );
+
+    c.glGenVertexArrays(1, &self.vao);
+    c.glBindVertexArray(self.vao);
+    c.glEnableVertexAttribArray(self.vertexAttribCoords);
+    c.glEnableVertexAttribArray(self.vertexAttribColor);
+    c.glBindBuffer(c.GL_ARRAY_BUFFER, self.cubeVertexBuffer);
+    c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, self.cubeIndexBuffer);
+    c.glVertexAttribPointer(
+        self.vertexAttribCoords,
+        3,
+        c.GL_FLOAT,
+        c.GL_FALSE,
+        @sizeOf(geometry.Vertex),
+        null,
+    );
+    c.glVertexAttribPointer(
+        self.vertexAttribColor,
+        3,
+        c.GL_FLOAT,
+        c.GL_FALSE,
+        @sizeOf(geometry.Vertex),
+        @ptrFromInt(@sizeOf(xr.XrVector3f)),
+    );
+}
+
+fn checkShader(shader: c.GLuint) void {
+    var r: c.GLint = 0;
+    c.glGetShaderiv(shader, c.GL_COMPILE_STATUS, &r);
+    if (r == c.GL_FALSE) {
+        var msg: [4096]u8 = undefined;
+        var length: c.GLsizei = undefined;
+        c.glGetShaderInfoLog(shader, msg.len, &length, &msg[0]);
+        std.log.err("Compile shader failed: {s}", .{std.mem.sliceTo(&msg, 0)});
+    }
+}
+
+fn checkProgram(prog: c.GLuint) void {
+    var r: c.GLint = 0;
+    c.glGetProgramiv(prog, c.GL_LINK_STATUS, &r);
+    if (r == c.GL_FALSE) {
+        var msg: [4096]u8 = undefined;
+        var length: c.GLsizei = undefined;
+        c.glGetProgramInfoLog(prog, msg.len, &length, &msg[0]);
+        std.log.err("Link program failed: {s}", .{std.mem.sliceTo(&msg, 0)});
+    }
+}
+
+pub fn selectColorSwapchainFormat(_: *anyopaque, runtimeFormats: []i64) ?i64 {
+    // List of supported color swapchain formats.
+    const SupportedColorSwapchainFormats = [_]i64{
+        c.GL_RGB10_A2,
+        c.GL_RGBA16F,
+        // The two below should only be used as a fallback,
+        // as they are linear color formats without enough bits for color
+        // depth, thus leading to banding.
+        c.GL_RGBA8,
+        c.GL_RGBA8_SNORM,
+    };
+
+    for (runtimeFormats) |runtime| {
+        for (SupportedColorSwapchainFormats) |supported| {
+            if (runtime == supported) {
+                return runtime;
+            }
+        }
+    }
+
+    return null;
+}
+
+pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    return @ptrCast(&self.graphicsBinding);
+}
+
+pub fn allocateSwapchainImageStructs(
+    _self: *anyopaque,
+    _: xr.XrSwapchainCreateInfo,
+    swapchainImageBase: []*xr.XrSwapchainImageBaseHeader,
+) bool {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    // Allocate and initialize the buffer of image structs
+    // (must be sequential in memory for xrEnumerateSwapchainImages).
+    // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
+    var item = self.allocator.create(SwapchainImageBufferNode) catch {
+        return false;
+    };
+    // Keep the buffer alive by moving it into the list of buffers.
+    self.swapchainImageBufferList.prepend(&item.node);
+
+    item.imageBuffer = self.allocator.alloc(xr.XrSwapchainImageOpenGLKHR, swapchainImageBase.len) catch {
+        return false;
+    };
+    for (item.imageBuffer, 0..) |*buffer, i| {
+        buffer.* = .{
+            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
+        };
+        swapchainImageBase[i] = @ptrCast(buffer);
+    }
+
+    return true;
+}
+
+fn getDepthTexture(self: *@This(), colorTexture: u32) !u32 {
+    // If a depth-stencil view has already been created for this back-buffer, use it.
+    if (self.colorToDepthMap.get(colorTexture)) |depthBuffer| {
+        return depthBuffer;
+    }
+
+    {
+        // This back-buffer has no corresponding depth-stencil texture, so create one with matching dimensions.
+        c.glBindTexture(c.GL_TEXTURE_2D, colorTexture);
+
+        var width: c.GLint = undefined;
+        c.glGetTexLevelParameteriv(c.GL_TEXTURE_2D, 0, c.GL_TEXTURE_WIDTH, &width);
+        var height: c.GLint = undefined;
+        c.glGetTexLevelParameteriv(c.GL_TEXTURE_2D, 0, c.GL_TEXTURE_HEIGHT, &height);
+
+        var depthTexture: u32 = undefined;
+        c.glGenTextures(1, &depthTexture);
+        c.glBindTexture(c.GL_TEXTURE_2D, depthTexture);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_CLAMP_TO_EDGE);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_CLAMP_TO_EDGE);
+        c.glTexImage2D(
+            c.GL_TEXTURE_2D,
+            0,
+            c.GL_DEPTH_COMPONENT32,
+            width,
+            height,
+            0,
+            c.GL_DEPTH_COMPONENT,
+            c.GL_FLOAT,
+            null,
+        );
+
+        try self.colorToDepthMap.put(colorTexture, depthTexture);
+
+        return depthTexture;
+    }
+}
+
+pub fn renderView(
+    _self: *anyopaque,
+    layerView: *const xr.XrCompositionLayerProjectionView,
+    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
+    swapchainFormat: i64,
+    cubes: []geometry.Cube,
+) bool {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    if (layerView.subImage.imageArrayIndex != 0) {
+        return false; // Texture arrays not supported.
+    }
+    _ = swapchainFormat; // Not used in this function for now.
+
+    c.glBindFramebuffer(c.GL_FRAMEBUFFER, self.swapchainFramebuffer);
+
+    c.glViewport(
+        @as(c.GLint, layerView.subImage.imageRect.offset.x),
+        @as(c.GLint, layerView.subImage.imageRect.offset.y),
+        @as(c.GLsizei, layerView.subImage.imageRect.extent.width),
+        @as(c.GLsizei, layerView.subImage.imageRect.extent.height),
+    );
+
+    c.glFrontFace(c.GL_CW);
+    c.glCullFace(c.GL_BACK);
+    c.glEnable(c.GL_CULL_FACE);
+    c.glEnable(c.GL_DEPTH_TEST);
+
+    const colorTexture = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(swapchainImage)).image;
+    const depthTexture = self.getDepthTexture(colorTexture) catch {
+        return false;
+    };
+
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_COLOR_ATTACHMENT0, c.GL_TEXTURE_2D, colorTexture, 0);
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_DEPTH_ATTACHMENT, c.GL_TEXTURE_2D, depthTexture, 0);
+
+    // Clear swapchain and depth buffer.
+    c.glClearColor(self.clearColor[0], self.clearColor[1], self.clearColor[2], self.clearColor[3]);
+    c.glClearDepth(1.0);
+    c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT | c.GL_STENCIL_BUFFER_BIT);
+
+    // Set shaders and uniform variables.
+    c.glUseProgram(self.program);
+
+    const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, layerView.fov, 0.05, 100.0);
+    const toView = xr_linear.Matrix4x4f.createFromRigidTransform(layerView.pose);
+    const view = toView.invertRigidBody();
+    const vp = proj.multiply(view);
+
+    // Set cube primitive data.
+    c.glBindVertexArray(self.vao);
+
+    // Render each cube
+    for (cubes) |cube| {
+        // Compute the model-view-projection transform and set it..
+        const model = xr_linear.Matrix4x4f.createTranslationRotationScale(
+            cube.Pose.position,
+            cube.Pose.orientation,
+            cube.Scale,
+        );
+        const mvp = vp.multiply(model);
+        c.glUniformMatrix4fv(self.modelViewProjectionUniformLocation, 1, c.GL_FALSE, &mvp.m[0]);
+
+        // Draw the cube.
+        c.glDrawElements(c.GL_TRIANGLES, geometry.c_cubeIndices.len, c.GL_UNSIGNED_SHORT, null);
+    }
+
+    c.glBindVertexArray(0);
+    c.glUseProgram(0);
+    c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
+
+    return true;
+}
+
+pub fn getSupportedSwapchainSampleCount(_: *anyopaque, _: xr.XrViewConfigurationView) u32 {
+    return 1;
+}
+
