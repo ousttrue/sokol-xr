@@ -2,19 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#include "graphicsplugin_d3d11.h"
 #include "pch.h"
 #include "common.h"
 #include "geometry.h"
 #include "graphicsplugin.h"
 #include "options.h"
 
-#if defined(XR_USE_GRAPHICS_API_D3D11)
-
 #include <common/xr_linear.h>
 #include <DirectXColors.h>
 #include <D3Dcompiler.h>
 
 #include "d3d_common.h"
+#include <list>
+#include <map>
 
 using namespace Microsoft::WRL;
 using namespace DirectX;
@@ -50,20 +51,24 @@ TryAgain:
     }
 }
 
-struct D3D11GraphicsPlugin : public IGraphicsPlugin {
-    D3D11GraphicsPlugin(const Options* options, IPlatformPlugin*)
-        : m_clearColor(GetBackgroundClearColor(options)) {}
+#define RETURN_IF_FAIL(xr)       \
+    {                            \
+        if (xr < 0) return (xr); \
+    }
 
-    std::vector<std::string> GetInstanceExtensions() const override { return {XR_KHR_D3D11_ENABLE_EXTENSION_NAME}; }
+struct D3D11GraphicsPlugin {
+    // D3D11GraphicsPlugin(const Options* options) : m_clearColor(GetBackgroundClearColor(options)) {}
 
-    void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
+    std::vector<std::string> GetInstanceExtensions() const { return {XR_KHR_D3D11_ENABLE_EXTENSION_NAME}; }
+
+    XrResult InitializeDevice(XrInstance instance, XrSystemId systemId) {
         PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetD3D11GraphicsRequirementsKHR = nullptr;
-        CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
-                                          reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D11GraphicsRequirementsKHR)));
+        RETURN_IF_FAIL(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
+                                             reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D11GraphicsRequirementsKHR)));
 
         // Create the D3D11 device for the adapter associated with the system.
         XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
-        CHECK_XRCMD(pfnGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+        RETURN_IF_FAIL(pfnGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
         const ComPtr<IDXGIAdapter1> adapter = GetAdapter(graphicsRequirements.adapterLuid);
 
         // Create a list of feature levels which are both supported by the OpenXR runtime and this application.
@@ -80,6 +85,8 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
         InitializeResources();
 
         m_graphicsBinding.device = m_device.Get();
+
+        return XR_SUCCESS;
     }
 
     void InitializeResources() {
@@ -115,7 +122,7 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
         CHECK_HRCMD(m_device->CreateBuffer(&indexBufferDesc, &indexBufferData, m_cubeIndexBuffer.ReleaseAndGetAddressOf()));
     }
 
-    int64_t SelectColorSwapchainFormat(const std::vector<int64_t>& runtimeFormats) const override {
+    int64_t SelectColorSwapchainFormat(const int64_t* runtimeFormats, size_t len) const {
         // List of supported color swapchain formats.
         constexpr DXGI_FORMAT SupportedColorSwapchainFormats[] = {
             DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -125,33 +132,27 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
         };
 
         auto swapchainFormatIt =
-            std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), std::begin(SupportedColorSwapchainFormats),
+            std::find_first_of(runtimeFormats, runtimeFormats + len, std::begin(SupportedColorSwapchainFormats),
                                std::end(SupportedColorSwapchainFormats));
-        if (swapchainFormatIt == runtimeFormats.end()) {
+        if (swapchainFormatIt == runtimeFormats + len) {
             THROW("No runtime swapchain format supported for color swapchain");
         }
 
         return *swapchainFormatIt;
     }
 
-    const XrBaseInStructure* GetGraphicsBinding() const override {
-        return reinterpret_cast<const XrBaseInStructure*>(&m_graphicsBinding);
-    }
+    const XrBaseInStructure* GetGraphicsBinding() const { return reinterpret_cast<const XrBaseInStructure*>(&m_graphicsBinding); }
 
-    std::vector<XrSwapchainImageBaseHeader*> AllocateSwapchainImageStructs(
-        uint32_t capacity, const XrSwapchainCreateInfo& /*swapchainCreateInfo*/) override {
+    void AllocateSwapchainImageStructs(XrSwapchainImageBaseHeader** headers, uint32_t capacity) {
         // Allocate and initialize the buffer of image structs (must be sequential in memory for xrEnumerateSwapchainImages).
         // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
         std::vector<XrSwapchainImageD3D11KHR> swapchainImageBuffer(capacity, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
-        std::vector<XrSwapchainImageBaseHeader*> swapchainImageBase;
-        for (XrSwapchainImageD3D11KHR& image : swapchainImageBuffer) {
-            swapchainImageBase.push_back(reinterpret_cast<XrSwapchainImageBaseHeader*>(&image));
+        for (size_t i = 0; i < capacity; ++i) {
+            headers[i] = reinterpret_cast<XrSwapchainImageBaseHeader*>(&swapchainImageBuffer[i]);
         }
 
         // Keep the buffer alive by moving it into the list of buffers.
         m_swapchainImageBuffers.push_back(std::move(swapchainImageBuffer));
-
-        return swapchainImageBase;
     }
 
     ComPtr<ID3D11DepthStencilView> GetDepthStencilView(ID3D11Texture2D* colorTexture) {
@@ -178,22 +179,34 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
 
         // Create and cache the depth stencil view.
         ComPtr<ID3D11DepthStencilView> depthStencilView;
-        CD3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc(D3D11_DSV_DIMENSION_TEXTURE2D, DXGI_FORMAT_D32_FLOAT);
+        D3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc = {
+            .Format = DXGI_FORMAT_D32_FLOAT,
+            .ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D,
+            .Flags = 0,
+            .Texture2D = {.MipSlice = 0},
+        };
         CHECK_HRCMD(m_device->CreateDepthStencilView(depthTexture.Get(), &depthStencilViewDesc, depthStencilView.GetAddressOf()));
         depthBufferIt = m_colorToDepthMap.insert(std::make_pair(colorTexture, depthStencilView)).first;
 
         return depthStencilView;
     }
 
-    void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-                    int64_t swapchainFormat, const std::vector<Cube>& cubes) override {
-        CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
+    void RenderView(const XrCompositionLayerProjectionView* layerView, const XrSwapchainImageBaseHeader* swapchainImage,
+                    int64_t swapchainFormat, const Cube* cubes, size_t len) {
+        if (layerView->subImage.imageArrayIndex != 0) {  // Texture arrays not supported.
+            return;
+        }
 
         ID3D11Texture2D* const colorTexture = reinterpret_cast<const XrSwapchainImageD3D11KHR*>(swapchainImage)->texture;
 
-        CD3D11_VIEWPORT viewport((float)layerView.subImage.imageRect.offset.x, (float)layerView.subImage.imageRect.offset.y,
-                                 (float)layerView.subImage.imageRect.extent.width,
-                                 (float)layerView.subImage.imageRect.extent.height);
+        D3D11_VIEWPORT viewport = {
+            .TopLeftX = (float)layerView->subImage.imageRect.offset.x,
+            .TopLeftY = (float)layerView->subImage.imageRect.offset.y,
+            .Width = (float)layerView->subImage.imageRect.extent.width,
+            .Height = (float)layerView->subImage.imageRect.extent.height,
+            .MinDepth = 0,  // D3D11_MIN_DEPTH,
+            .MaxDepth = 1,  // D3D11_MAX_DEPTH,
+        };
         m_deviceContext->RSSetViewports(1, &viewport);
 
         // Create RenderTargetView with original swapchain format (swapchain is typeless).
@@ -205,15 +218,21 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
         const ComPtr<ID3D11DepthStencilView> depthStencilView = GetDepthStencilView(colorTexture);
 
         // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
-        m_deviceContext->ClearRenderTargetView(renderTargetView.Get(), static_cast<const FLOAT*>(m_clearColor.data()));
+        float clearColor[4] = {
+            0,
+            0,
+            0,
+            0,
+        };
+        m_deviceContext->ClearRenderTargetView(renderTargetView.Get(), clearColor);
         m_deviceContext->ClearDepthStencilView(depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
         ID3D11RenderTargetView* renderTargets[] = {renderTargetView.Get()};
         m_deviceContext->OMSetRenderTargets((UINT)ArraySize(renderTargets), renderTargets, depthStencilView.Get());
 
-        const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView.pose));
+        const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView->pose));
         XrMatrix4x4f projectionMatrix;
-        XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, layerView.fov, 0.05f, 100.0f);
+        XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, layerView->fov, 0.05f, 100.0f);
 
         // Set shaders and constant buffers.
         ViewProjectionConstantBuffer viewProjection;
@@ -235,7 +254,8 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
         m_deviceContext->IASetInputLayout(m_inputLayout.Get());
 
         // Render each cube
-        for (const Cube& cube : cubes) {
+        for (size_t i = 0; i < len; ++i) {
+            auto cube = cubes[i];
             // Compute and update the model transform.
             ModelConstantBuffer model;
             XMStoreFloat4x4(&model.Model,
@@ -247,9 +267,9 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
         }
     }
 
-    uint32_t GetSupportedSwapchainSampleCount(const XrViewConfigurationView&) override { return 1; }
+    uint32_t GetSupportedSwapchainSampleCount(const XrViewConfigurationView&) { return 1; }
 
-    void UpdateOptions(const Options* options) override { m_clearColor = GetBackgroundClearColor(options); }
+    // void UpdateOptions(const Options* options) { m_clearColor = GetBackgroundClearColor(options); }
 
    private:
     ComPtr<ID3D11Device> m_device;
@@ -266,13 +286,25 @@ struct D3D11GraphicsPlugin : public IGraphicsPlugin {
 
     // Map color buffer to associated depth buffer. This map is populated on demand.
     std::map<ID3D11Texture2D*, ComPtr<ID3D11DepthStencilView>> m_colorToDepthMap;
-    std::array<float, 4> m_clearColor;
+    // std::array<float, 4> m_clearColor;
 };
 }  // namespace
 
-IGraphicsPlugin* CreateGraphicsPlugin_D3D11(const Options* options,
-                                                            IPlatformPlugin* platformPlugin) {
-    return std::make_shared<D3D11GraphicsPlugin>(options, platformPlugin);
+void* create() { return new D3D11GraphicsPlugin(); }
+void destroy(void* p) { delete reinterpret_cast<D3D11GraphicsPlugin*>(p); }
+int initializeDevice(void* p, void* instance, uint64_t systemId) {
+    return reinterpret_cast<D3D11GraphicsPlugin*>(p)->InitializeDevice(reinterpret_cast<XrInstance>(instance), systemId);
 }
-
-#endif
+int64_t selectColorSwapchainFormat(void* p, int64_t* formats, size_t len) {
+    return reinterpret_cast<D3D11GraphicsPlugin*>(p)->SelectColorSwapchainFormat(formats, len);
+}
+const void* getGraphicsBinding(void* p) { return reinterpret_cast<D3D11GraphicsPlugin*>(p)->GetGraphicsBinding(); }
+void allocateSwapchainImageStructs(void* p, void* pImage, size_t len) {
+    reinterpret_cast<D3D11GraphicsPlugin*>(p)->AllocateSwapchainImageStructs(reinterpret_cast<XrSwapchainImageBaseHeader**>(pImage),
+                                                                             len);
+}
+void renderView(void* p, const void* view, const void* image, int64_t format, const void* pCube, size_t len) {
+    reinterpret_cast<D3D11GraphicsPlugin*>(p)->RenderView(reinterpret_cast<const XrCompositionLayerProjectionView*>(view),
+                                                          reinterpret_cast<const XrSwapchainImageBaseHeader*>(image), format,
+                                                          reinterpret_cast<const Cube*>(pCube), len);
+}

@@ -66,7 +66,6 @@ pub fn build(b: *std.Build) !void {
             .args = &.{"-DDYNAMIC_LOADER=ON"},
         });
     };
-
     compiled.addLibraryPath(openxr_loader.prefix.getDirectory().path(b, "lib"));
     compiled.linkSystemLibrary("openxr_loader");
 
@@ -82,6 +81,7 @@ pub fn build(b: *std.Build) !void {
     t.addIncludePath(openxr_dep.path("include"));
     const openxr_mod = t.createModule();
     compiled.root_module.addImport("openxr", openxr_mod);
+    compiled.addIncludePath(openxr_dep.path("include"));
 
     // xr_result
     const xr_result = b.addModule("xr_result", .{
@@ -97,18 +97,29 @@ pub fn build(b: *std.Build) !void {
                 "external/glad2/src/gl.c",
                 "external/glad2/src/wgl.c",
                 "common/gfxwrapper_opengl.c",
+                "graphicsplugin_d3d11.cpp",
+                "d3d_common.cpp",
             },
             .flags = &.{
                 "-D_WIN32",
                 "-DXR_USE_PLATFORM_WIN32",
                 "-DXR_USE_GRAPHICS_API_OPENGL",
+                "-DXR_USE_GRAPHICS_API_D3D11",
             },
         });
+        compiled.linkLibCpp();
 
         // windows
         compiled.linkSystemLibrary("ole32");
         compiled.linkSystemLibrary("opengl32");
         compiled.linkSystemLibrary("gdi32");
+        compiled.linkSystemLibrary("d3d11");
+        compiled.linkSystemLibrary("dxgi");
+
+        compiled.addLibraryPath(.{
+            .cwd_relative = "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/um/x64",
+        });
+        compiled.linkSystemLibrary("d3dcompiler");
 
         // copy dll
         const dll = b.addInstallBinFile(
@@ -116,6 +127,9 @@ pub fn build(b: *std.Build) !void {
             "openxr_loader.dll",
         );
         b.getInstallStep().dependOn(&dll.step);
+
+        const directxmath_dep = b.dependency("DirectXMath", .{});
+        compiled.addIncludePath(directxmath_dep.path("Inc"));
     } else if (target.result.abi.isAndroid()) {
         const libc_file = try ndk.LibCFile.make(b, ndk_path, target, API_LEVEL);
         // for compile
