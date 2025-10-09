@@ -2,10 +2,10 @@ const std = @import("std");
 const Options = @import("Options.zig");
 const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
+const xr_result = @import("xr_result.zig");
 const geometry = @import("geometry.zig");
 const c = xr_util.c;
 const xr = @import("openxr");
-const CHECK_XRCMD = xr_util.CHECK_XRCMD;
 
 const Side = struct {
     const LEFT = 0;
@@ -107,17 +107,17 @@ fn logLayersAndExtensions(self: *@This()) !void {
     // Write out extension properties for a given layer.
 
     // Log non-layer extensions (layerName==nullptr).
-    try self.logExtensions("", "");
+    // try self.logExtensions("", "");
 
     // Log layers and any of their extensions.
     {
         var layerCount: u32 = undefined;
-        try CHECK_XRCMD(xr.xrEnumerateApiLayerProperties(0, &layerCount, null));
+        _ = try xr_result.check(xr.xrEnumerateApiLayerProperties(0, &layerCount, null));
         std.log.info("Available Layers: ({})", .{layerCount});
         if (layerCount > 0) {
             var layers = try self.allocator.alloc(xr.XrApiLayerProperties, layerCount);
             // std::vector<XrApiLayerProperties> layers(layerCount, {XR_TYPE_API_LAYER_PROPERTIES});
-            try CHECK_XRCMD(xr.xrEnumerateApiLayerProperties(@intCast(layers.len), &layerCount, &layers[0]));
+            _ = try xr_result.check(xr.xrEnumerateApiLayerProperties(@intCast(layers.len), &layerCount, &layers[0]));
 
             for (layers) |layer| {
                 std.log.debug("  Name={s} SpecVersion={}.{}.{} LayerVersion={} Description={s}", .{
@@ -141,7 +141,7 @@ fn logLayersAndExtensions(self: *@This()) !void {
 
 fn logExtensions(self: *@This(), layerName: [*:0]const u8, indent: []const u8) !void {
     var instanceExtensionCount: u32 = undefined;
-    try CHECK_XRCMD(xr.xrEnumerateInstanceExtensionProperties(layerName, 0, &instanceExtensionCount, null));
+    _ = try xr_result.check(xr.xrEnumerateInstanceExtensionProperties(layerName, 0, &instanceExtensionCount, null));
     std.log.debug("{s}Available Extensions: ({})", .{ indent, instanceExtensionCount });
 
     if (instanceExtensionCount > 0) {
@@ -152,7 +152,7 @@ fn logExtensions(self: *@This(), layerName: [*:0]const u8, indent: []const u8) !
                 .type = xr.XR_TYPE_EXTENSION_PROPERTIES,
             };
         }
-        try CHECK_XRCMD(xr.xrEnumerateInstanceExtensionProperties(
+        _ = try xr_result.check(xr.xrEnumerateInstanceExtensionProperties(
             layerName,
             @intCast(extensions.len),
             &instanceExtensionCount,
@@ -216,7 +216,7 @@ fn createInstanceInternal(
     _ = try std.fmt.bufPrintZ(&createInfo.applicationInfo.applicationName, "{s}", .{"hello_xr"});
     _ = try std.fmt.bufPrintZ(&createInfo.applicationInfo.engineName, "{s}", .{"hello_xr.engine"});
 
-    try CHECK_XRCMD(xr.xrCreateInstance(&createInfo, &self.instance));
+    try xr_result.check(xr.xrCreateInstance(&createInfo, &self.instance));
 }
 
 fn logInstanceInfo(self: *@This()) !void {
@@ -225,7 +225,7 @@ fn logInstanceInfo(self: *@This()) !void {
     var instanceProperties = xr.XrInstanceProperties{
         .type = xr.XR_TYPE_INSTANCE_PROPERTIES,
     };
-    try CHECK_XRCMD(xr.xrGetInstanceProperties(self.instance, &instanceProperties));
+    try xr_result.check(xr.xrGetInstanceProperties(self.instance, &instanceProperties));
 
     std.log.info("Instance RuntimeName={s} RuntimeVersion={}", .{
         instanceProperties.runtimeName,
@@ -242,7 +242,7 @@ pub fn initializeSystem(self: *@This()) !void {
         .next = null,
         .formFactor = self.options.Parsed.FormFactor,
     };
-    try CHECK_XRCMD(xr.xrGetSystem(self.instance, &systemInfo, &self.systemId));
+    try xr_result.check(xr.xrGetSystem(self.instance, &systemInfo, &self.systemId));
 
     std.log.debug("Using system {} for form factor {}", .{
         self.systemId,
@@ -254,7 +254,7 @@ pub fn initializeSystem(self: *@This()) !void {
 
 pub fn getPreferredBlendMode(self: @This()) !xr.XrEnvironmentBlendMode {
     var count: u32 = undefined;
-    try CHECK_XRCMD(xr.xrEnumerateEnvironmentBlendModes(
+    try xr_result.check(xr.xrEnumerateEnvironmentBlendModes(
         self.instance,
         self.systemId,
         self.options.Parsed.ViewConfigType,
@@ -266,7 +266,7 @@ pub fn getPreferredBlendMode(self: @This()) !xr.XrEnvironmentBlendMode {
 
     const blendModes = try self.allocator.alloc(xr.XrEnvironmentBlendMode, count);
     defer self.allocator.free(blendModes);
-    try CHECK_XRCMD(xr.xrEnumerateEnvironmentBlendModes(
+    try xr_result.check(xr.xrEnumerateEnvironmentBlendModes(
         self.instance,
         self.systemId,
         self.options.Parsed.ViewConfigType,
@@ -287,13 +287,11 @@ pub fn getPreferredBlendMode(self: @This()) !xr.XrEnvironmentBlendMode {
     unreachable;
 }
 
-pub fn initializeDevice(self: *@This()) bool {
-    self.logViewConfigurations() catch {
-        return false;
-    };
+pub fn initializeDevice(self: *@This()) !void {
+    try self.logViewConfigurations();
 
     // The graphics API can initialize the graphics device now that the systemId and instance handle are available.
-    return self.graphics.initializeDevice(@ptrCast(self.instance), self.systemId);
+    try self.graphics.initializeDevice(@ptrCast(self.instance), self.systemId);
 }
 
 fn logViewConfigurations(self: @This()) !void {
@@ -301,10 +299,10 @@ fn logViewConfigurations(self: @This()) !void {
     try xr_util.assert(self.systemId != xr.XR_NULL_SYSTEM_ID);
 
     var viewConfigTypeCount: u32 = undefined;
-    try CHECK_XRCMD(xr.xrEnumerateViewConfigurations(self.instance, self.systemId, 0, &viewConfigTypeCount, null));
+    try xr_result.check(xr.xrEnumerateViewConfigurations(self.instance, self.systemId, 0, &viewConfigTypeCount, null));
     const viewConfigTypes = try self.allocator.alloc(xr.XrViewConfigurationType, viewConfigTypeCount);
     defer self.allocator.free(viewConfigTypes);
-    try CHECK_XRCMD(xr.xrEnumerateViewConfigurations(self.instance, self.systemId, viewConfigTypeCount, &viewConfigTypeCount, &viewConfigTypes[0]));
+    try xr_result.check(xr.xrEnumerateViewConfigurations(self.instance, self.systemId, viewConfigTypeCount, &viewConfigTypeCount, &viewConfigTypes[0]));
     try xr_util.assert(viewConfigTypes.len == viewConfigTypeCount);
 
     std.log.info("Available View Configuration Types: ({})", .{viewConfigTypeCount});
@@ -317,7 +315,7 @@ fn logViewConfigurations(self: @This()) !void {
         var viewConfigProperties = xr.XrViewConfigurationProperties{
             .type = xr.XR_TYPE_VIEW_CONFIGURATION_PROPERTIES,
         };
-        try CHECK_XRCMD(xr.xrGetViewConfigurationProperties(
+        try xr_result.check(xr.xrGetViewConfigurationProperties(
             self.instance,
             self.systemId,
             viewConfigType,
@@ -329,7 +327,7 @@ fn logViewConfigurations(self: @This()) !void {
         });
 
         var viewCount: u32 = undefined;
-        try CHECK_XRCMD(xr.xrEnumerateViewConfigurationViews(
+        try xr_result.check(xr.xrEnumerateViewConfigurationViews(
             self.instance,
             self.systemId,
             viewConfigType,
@@ -343,7 +341,7 @@ fn logViewConfigurations(self: @This()) !void {
             for (views) |*view| {
                 view.* = .{ .type = xr.XR_TYPE_VIEW_CONFIGURATION_VIEW };
             }
-            try CHECK_XRCMD(xr.xrEnumerateViewConfigurationViews(
+            try xr_result.check(xr.xrEnumerateViewConfigurationViews(
                 self.instance,
                 self.systemId,
                 viewConfigType,
@@ -377,14 +375,14 @@ fn logEnvironmentBlendMode(self: @This(), view_type: xr.XrViewConfigurationType)
     try xr_util.assert(self.systemId != 0);
 
     var count: u32 = undefined;
-    try CHECK_XRCMD(xr.xrEnumerateEnvironmentBlendModes(self.instance, self.systemId, view_type, 0, &count, null));
+    try xr_result.check(xr.xrEnumerateEnvironmentBlendModes(self.instance, self.systemId, view_type, 0, &count, null));
     try xr_util.assert(count > 0);
 
     std.log.info("Available Environment Blend Mode count : ({})", .{count});
 
     const blendModes = try self.allocator.alloc(xr.XrEnvironmentBlendMode, count);
     defer self.allocator.free(blendModes);
-    try CHECK_XRCMD(xr.xrEnumerateEnvironmentBlendModes(
+    try xr_result.check(xr.xrEnumerateEnvironmentBlendModes(
         self.instance,
         self.systemId,
         view_type,
@@ -417,7 +415,7 @@ pub fn initializeSession(self: *@This()) !void {
             .next = self.graphics.getGraphicsBinding(),
             .systemId = self.systemId,
         };
-        try CHECK_XRCMD(xr.xrCreateSession(self.instance, &createInfo, &self.session));
+        try xr_result.check(xr.xrCreateSession(self.instance, &createInfo, &self.session));
     }
 
     try self.logReferenceSpaces();
@@ -426,7 +424,7 @@ pub fn initializeSession(self: *@This()) !void {
 
     {
         const referenceSpaceCreateInfo = try xr_util.getXrReferenceSpaceCreateInfo(self.options.AppSpace);
-        try CHECK_XRCMD(xr.xrCreateReferenceSpace(self.session, &referenceSpaceCreateInfo, &self.appSpace));
+        try xr_result.check(xr.xrCreateReferenceSpace(self.session, &referenceSpaceCreateInfo, &self.appSpace));
     }
 }
 
@@ -434,10 +432,10 @@ fn logReferenceSpaces(self: @This()) !void {
     try xr_util.assert(self.session != null);
 
     var spaceCount: u32 = undefined;
-    try CHECK_XRCMD(xr.xrEnumerateReferenceSpaces(self.session, 0, &spaceCount, null));
+    try xr_result.check(xr.xrEnumerateReferenceSpaces(self.session, 0, &spaceCount, null));
     const spaces = try self.allocator.alloc(xr.XrReferenceSpaceType, spaceCount);
     defer self.allocator.free(spaces);
-    try CHECK_XRCMD(xr.xrEnumerateReferenceSpaces(self.session, spaceCount, &spaceCount, &spaces[0]));
+    try xr_result.check(xr.xrEnumerateReferenceSpaces(self.session, spaceCount, &spaceCount, &spaces[0]));
 
     std.log.info("Available reference spaces: {}", .{spaceCount});
     for (spaces) |space| {
@@ -482,7 +480,7 @@ pub fn createSwapchains(self: *@This()) !void {
     var systemProperties = xr.XrSystemProperties{
         .type = xr.XR_TYPE_SYSTEM_PROPERTIES,
     };
-    try CHECK_XRCMD(xr.xrGetSystemProperties(self.instance, self.systemId, &systemProperties));
+    try xr_result.check(xr.xrGetSystemProperties(self.instance, self.systemId, &systemProperties));
 
     // Log system properties.
     std.log.info("System Properties: Name={s} VendorId={}", .{
@@ -508,7 +506,7 @@ pub fn createSwapchains(self: *@This()) !void {
 
     // Query and cache view configuration views.
     var viewCount: u32 = undefined;
-    try CHECK_XRCMD(xr.xrEnumerateViewConfigurationViews(
+    try xr_result.check(xr.xrEnumerateViewConfigurationViews(
         self.instance,
         self.systemId,
         self.options.Parsed.ViewConfigType,
@@ -522,7 +520,7 @@ pub fn createSwapchains(self: *@This()) !void {
             .type = xr.XR_TYPE_VIEW_CONFIGURATION_VIEW,
         };
     }
-    try CHECK_XRCMD(xr.xrEnumerateViewConfigurationViews(
+    try xr_result.check(xr.xrEnumerateViewConfigurationViews(
         self.instance,
         self.systemId,
         self.options.Parsed.ViewConfigType,
@@ -543,7 +541,7 @@ pub fn createSwapchains(self: *@This()) !void {
     if (viewCount > 0) {
         // Select a swapchain format.
         var swapchainFormatCount: u32 = undefined;
-        try CHECK_XRCMD(xr.xrEnumerateSwapchainFormats(
+        try xr_result.check(xr.xrEnumerateSwapchainFormats(
             self.session,
             0,
             &swapchainFormatCount,
@@ -551,7 +549,7 @@ pub fn createSwapchains(self: *@This()) !void {
         ));
         const swapchainFormats = try self.allocator.alloc(i64, swapchainFormatCount);
         defer self.allocator.free(swapchainFormats);
-        try CHECK_XRCMD(xr.xrEnumerateSwapchainFormats(
+        try xr_result.check(xr.xrEnumerateSwapchainFormats(
             self.session,
             @intCast(swapchainFormats.len),
             &swapchainFormatCount,
@@ -606,19 +604,19 @@ pub fn createSwapchains(self: *@This()) !void {
                 .height = swapchainCreateInfo.height,
                 .handle = null,
             };
-            try CHECK_XRCMD(xr.xrCreateSwapchain(self.session, &swapchainCreateInfo, &swapchain.handle));
+            try xr_result.check(xr.xrCreateSwapchain(self.session, &swapchainCreateInfo, &swapchain.handle));
 
             try self.swapchains.append(swapchain);
 
             var imageCount: u32 = undefined;
-            try CHECK_XRCMD(xr.xrEnumerateSwapchainImages(swapchain.handle, 0, &imageCount, null));
+            try xr_result.check(xr.xrEnumerateSwapchainImages(swapchain.handle, 0, &imageCount, null));
             // XXX This should really just return XrSwapchainImageBaseHeader*
 
             const swapchainBuffer = try self.allocator.alloc(*xr.XrSwapchainImageBaseHeader, imageCount);
             if (!self.graphics.allocateSwapchainImageStructs(swapchainCreateInfo, swapchainBuffer)) {
                 return error.allocateSwapchainImageStructs;
             }
-            try CHECK_XRCMD(xr.xrEnumerateSwapchainImages(
+            try xr_result.check(xr.xrEnumerateSwapchainImages(
                 swapchain.handle,
                 imageCount,
                 &imageCount,
@@ -695,13 +693,13 @@ fn handleSessionStateChangedEvent(
                 .type = xr.XR_TYPE_SESSION_BEGIN_INFO,
                 .primaryViewConfigurationType = self.options.Parsed.ViewConfigType,
             };
-            try CHECK_XRCMD(xr.xrBeginSession(self.session, &sessionBeginInfo));
+            try xr_result.check(xr.xrBeginSession(self.session, &sessionBeginInfo));
             self.sessionRunning = true;
         },
         xr.XR_SESSION_STATE_STOPPING => {
             try xr_util.assert(self.session != null);
             self.sessionRunning = false;
-            try CHECK_XRCMD(xr.xrEndSession(self.session));
+            try xr_result.check(xr.xrEndSession(self.session));
         },
         xr.XR_SESSION_STATE_EXITING => {
             exitRenderLoop.* = true;
@@ -750,12 +748,12 @@ pub fn renderFrame(self: *@This()) !void {
     var frameState = xr.XrFrameState{
         .type = xr.XR_TYPE_FRAME_STATE,
     };
-    try CHECK_XRCMD(xr.xrWaitFrame(self.session, &frameWaitInfo, &frameState));
+    try xr_result.check(xr.xrWaitFrame(self.session, &frameWaitInfo, &frameState));
 
     var frameBeginInfo = xr.XrFrameBeginInfo{
         .type = xr.XR_TYPE_FRAME_BEGIN_INFO,
     };
-    try CHECK_XRCMD(xr.xrBeginFrame(self.session, &frameBeginInfo));
+    try xr_result.check(xr.xrBeginFrame(self.session, &frameBeginInfo));
 
     var layers = std.array_list.Managed(*xr.XrCompositionLayerBaseHeader).init(self.allocator);
     defer layers.deinit();
@@ -778,7 +776,7 @@ pub fn renderFrame(self: *@This()) !void {
         .layerCount = @intCast(layers.items.len),
         .layers = if (layers.items.len > 0) &layers.items[0] else null,
     };
-    try CHECK_XRCMD(xr.xrEndFrame(self.session, &frameEndInfo));
+    try xr_result.check(xr.xrEndFrame(self.session, &frameEndInfo));
 }
 
 fn renderLayer(
@@ -891,13 +889,13 @@ fn renderLayer(
         };
 
         var swapchainImageIndex: u32 = undefined;
-        try CHECK_XRCMD(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
+        try xr_result.check(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
 
         var waitInfo = xr.XrSwapchainImageWaitInfo{
             .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
             .timeout = xr.XR_INFINITE_DURATION,
         };
-        try CHECK_XRCMD(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+        try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
 
         projectionLayerViews.items[i] = .{
             .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
@@ -929,7 +927,7 @@ fn renderLayer(
             const releaseInfo = xr.XrSwapchainImageReleaseInfo{
                 .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
             };
-            try CHECK_XRCMD(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+            try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
     }
 
@@ -952,12 +950,12 @@ fn initializeActions(self: *@This()) !void {
         };
         //     strcpy_s(actionSetInfo.actionSetName, "gameplay");
         //     strcpy_s(actionSetInfo.localizedActionSetName, "Gameplay");
-        try CHECK_XRCMD(xr.xrCreateActionSet(self.instance, &actionSetInfo, &self.input.actionSet));
+        try xr_result.check(xr.xrCreateActionSet(self.instance, &actionSetInfo, &self.input.actionSet));
     }
 
     // // Get the XrPath for the left and right hands - we will use them as subaction paths.
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left", &m_input.handSubactionPath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right", &m_input.handSubactionPath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left", &m_input.handSubactionPath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right", &m_input.handSubactionPath[Side::RIGHT]));
     //
     // // Create actions.
     // {
@@ -968,7 +966,7 @@ fn initializeActions(self: *@This()) !void {
     //     strcpy_s(actionInfo.localizedActionName, "Grab Object");
     //     actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
     //     actionInfo.subactionPaths = m_input.handSubactionPath.data();
-    //     CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
+    //     xr_result.check(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
     //
     //     // Create an input action getting the left and right hand poses.
     //     actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
@@ -976,7 +974,7 @@ fn initializeActions(self: *@This()) !void {
     //     strcpy_s(actionInfo.localizedActionName, "Hand Pose");
     //     actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
     //     actionInfo.subactionPaths = m_input.handSubactionPath.data();
-    //     CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.poseAction));
+    //     xr_result.check(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.poseAction));
     //
     //     // Create output actions for vibrating the left and right controller.
     //     actionInfo.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
@@ -984,7 +982,7 @@ fn initializeActions(self: *@This()) !void {
     //     strcpy_s(actionInfo.localizedActionName, "Vibrate Hand");
     //     actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
     //     actionInfo.subactionPaths = m_input.handSubactionPath.data();
-    //     CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.vibrateAction));
+    //     xr_result.check(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.vibrateAction));
     //
     //     // Create input actions for quitting the session using the left and right controller.
     //     // Since it doesn't matter which hand did this, we do not specify subaction paths for it.
@@ -994,7 +992,7 @@ fn initializeActions(self: *@This()) !void {
     //     strcpy_s(actionInfo.localizedActionName, "Quit Session");
     //     actionInfo.countSubactionPaths = 0;
     //     actionInfo.subactionPaths = nullptr;
-    //     CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
+    //     xr_result.check(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
     // }
     //
     // std::array<XrPath, Side::COUNT> selectPath;
@@ -1006,28 +1004,28 @@ fn initializeActions(self: *@This()) !void {
     // std::array<XrPath, Side::COUNT> menuClickPath;
     // std::array<XrPath, Side::COUNT> bClickPath;
     // std::array<XrPath, Side::COUNT> triggerValuePath;
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &squeezeValuePath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/force", &squeezeForcePath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/force", &squeezeForcePath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &posePath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/b/click", &bClickPath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bClickPath[Side::RIGHT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
-    // CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &squeezeValuePath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/force", &squeezeForcePath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/force", &squeezeForcePath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &posePath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/b/click", &bClickPath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bClickPath[Side::RIGHT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
+    // xr_result.check(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
     // // Suggest bindings for KHR Simple.
     // {
     //     XrPath khrSimpleInteractionProfilePath;
-    //     CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &khrSimpleInteractionProfilePath));
+    //     xr_result.check(xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &khrSimpleInteractionProfilePath));
     //     std::vector<XrActionSuggestedBinding> bindings{{// Fall back to a click input for the grab action.
     //                                                     {m_input.grabAction, selectPath[Side::LEFT]},
     //                                                     {m_input.grabAction, selectPath[Side::RIGHT]},
@@ -1041,12 +1039,12 @@ fn initializeActions(self: *@This()) !void {
     //     suggestedBindings.interactionProfile = khrSimpleInteractionProfilePath;
     //     suggestedBindings.suggestedBindings = bindings.data();
     //     suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-    //     CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+    //     xr_result.check(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
     // }
     // // Suggest bindings for the Oculus Touch.
     // {
     //     XrPath oculusTouchInteractionProfilePath;
-    //     CHECK_XRCMD(
+    //     xr_result.check(
     //         xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchInteractionProfilePath));
     //     std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeValuePath[Side::LEFT]},
     //                                                     {m_input.grabAction, squeezeValuePath[Side::RIGHT]},
@@ -1059,12 +1057,12 @@ fn initializeActions(self: *@This()) !void {
     //     suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
     //     suggestedBindings.suggestedBindings = bindings.data();
     //     suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-    //     CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+    //     xr_result.check(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
     // }
     // // Suggest bindings for the Vive Controller.
     // {
     //     XrPath viveControllerInteractionProfilePath;
-    //     CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/htc/vive_controller", &viveControllerInteractionProfilePath));
+    //     xr_result.check(xrStringToPath(m_instance, "/interaction_profiles/htc/vive_controller", &viveControllerInteractionProfilePath));
     //     std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, triggerValuePath[Side::LEFT]},
     //                                                     {m_input.grabAction, triggerValuePath[Side::RIGHT]},
     //                                                     {m_input.poseAction, posePath[Side::LEFT]},
@@ -1077,13 +1075,13 @@ fn initializeActions(self: *@This()) !void {
     //     suggestedBindings.interactionProfile = viveControllerInteractionProfilePath;
     //     suggestedBindings.suggestedBindings = bindings.data();
     //     suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-    //     CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+    //     xr_result.check(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
     // }
     //
     // // Suggest bindings for the Valve Index Controller.
     // {
     //     XrPath indexControllerInteractionProfilePath;
-    //     CHECK_XRCMD(
+    //     xr_result.check(
     //         xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexControllerInteractionProfilePath));
     //     std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeForcePath[Side::LEFT]},
     //                                                     {m_input.grabAction, squeezeForcePath[Side::RIGHT]},
@@ -1097,13 +1095,13 @@ fn initializeActions(self: *@This()) !void {
     //     suggestedBindings.interactionProfile = indexControllerInteractionProfilePath;
     //     suggestedBindings.suggestedBindings = bindings.data();
     //     suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-    //     CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+    //     xr_result.check(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
     // }
     //
     // // Suggest bindings for the Microsoft Mixed Reality Motion Controller.
     // {
     //     XrPath microsoftMixedRealityInteractionProfilePath;
-    //     CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
+    //     xr_result.check(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
     //                                &microsoftMixedRealityInteractionProfilePath));
     //     std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeClickPath[Side::LEFT]},
     //                                                     {m_input.grabAction, squeezeClickPath[Side::RIGHT]},
@@ -1117,18 +1115,18 @@ fn initializeActions(self: *@This()) !void {
     //     suggestedBindings.interactionProfile = microsoftMixedRealityInteractionProfilePath;
     //     suggestedBindings.suggestedBindings = bindings.data();
     //     suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-    //     CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+    //     xr_result.check(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
     // }
     // XrActionSpaceCreateInfo actionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
     // actionSpaceInfo.action = m_input.poseAction;
     // actionSpaceInfo.poseInActionSpace.orientation.w = 1.f;
     // actionSpaceInfo.subactionPath = m_input.handSubactionPath[Side::LEFT];
-    // CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::LEFT]));
+    // xr_result.check(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::LEFT]));
     // actionSpaceInfo.subactionPath = m_input.handSubactionPath[Side::RIGHT];
-    // CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::RIGHT]));
+    // xr_result.check(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::RIGHT]));
     //
     // XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
     // attachInfo.countActionSets = 1;
     // attachInfo.actionSets = &m_input.actionSet;
-    // CHECK_XRCMD(xrAttachSessionActionSets(m_session, &attachInfo));
+    // xr_result.check(xrAttachSessionActionSets(m_session, &attachInfo));
 }

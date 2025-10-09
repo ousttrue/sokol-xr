@@ -1,10 +1,15 @@
 const xr = @import("openxr");
 const geometry = @import("geometry.zig");
+const xr_result = @import("xr_result.zig");
 
 pub const VTable = struct {
     deinit: *const fn (ptr: *anyopaque) void,
     getInstanceExtensions: *const fn (ptr: *anyopaque) []const []const u8,
-    initializeDevice: *const fn (ptr: *anyopaque, instance: xr.XrInstance, systemId: xr.XrSystemId) bool,
+    initializeDevice: *const fn (
+        ptr: *anyopaque,
+        instance: xr.XrInstance,
+        systemId: xr.XrSystemId,
+    ) xr_result.Error!void,
     getGraphicsBinding: *const fn (ptr: *anyopaque) ?*const xr.XrBaseInStructure,
     selectColorSwapchainFormat: *const fn (ptr: *anyopaque, runtime_formats: []i64) ?i64,
     getSupportedSwapchainSampleCount: *const fn (ptr: *anyopaque, config: xr.XrViewConfigurationView) u32,
@@ -33,8 +38,12 @@ pub fn getInstanceExtensions(self: @This()) []const []const u8 {
     return self.vtable.getInstanceExtensions(self.ptr);
 }
 
-pub fn initializeDevice(self: @This(), instance: xr.XrInstance, systemId: xr.XrSystemId) bool {
-    return self.vtable.initializeDevice(self.ptr, instance, systemId);
+pub fn initializeDevice(
+    self: @This(),
+    instance: xr.XrInstance,
+    systemId: xr.XrSystemId,
+) xr_result.Error!void {
+    try self.vtable.initializeDevice(self.ptr, instance, systemId);
 }
 
 pub fn getGraphicsBinding(self: @This()) ?*const xr.XrBaseInStructure {

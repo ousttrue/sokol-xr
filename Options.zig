@@ -1,8 +1,33 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("xr_util.zig").c;
 const xr = @import("openxr");
 
-GraphicsPlugin: []const u8 = "",
+pub const GraphicsPluginType = enum {
+    D3D11,
+    D3D12,
+    OpenGLES,
+    OpenGL,
+    Vulkan2,
+    Vulkan,
+    Metal,
+
+    fn fromStr(s: []const u8) ?@This() {
+        inline for (@typeInfo(@This()).@"enum".fields) |f| {
+            if (std.mem.eql(u8, f.name, s)) {
+                return @as(@This(), @enumFromInt(f.value));
+            }
+        }
+        return null;
+    }
+};
+
+GraphicsPlugin: GraphicsPluginType = if (builtin.target.os.tag == .windows)
+    .D3D11
+else if (builtin.target.abi.isAndroid())
+    .OpenGLES
+else
+    .OpenGL,
 FormFactor: []const u8 = "Hmd",
 ViewConfiguration: []const u8 = "Stereo",
 EnvironmentBlendMode: []const u8 = "Opaque",
@@ -38,7 +63,9 @@ pub fn init(argc: usize, argv: [*][*:0]u8) !@This() {
     while (nextArg.i < nextArg.argc) {
         const arg = try nextArg.get();
         if (std.mem.eql(u8, arg, "--graphics") or std.mem.eql(u8, arg, "-g")) {
-            options.GraphicsPlugin = try nextArg.get();
+            if (GraphicsPluginType.fromStr(try nextArg.get())) |graphics_type| {
+                options.GraphicsPlugin = graphics_type;
+            }
         } else if (std.mem.eql(u8, arg, "--formfactor") or std.mem.eql(u8, arg, "-ff")) {
             options.FormFactor = try nextArg.get();
         } else if (std.mem.eql(u8, arg, "--viewconfig") or std.mem.eql(u8, arg, "-vc")) {
@@ -55,13 +82,6 @@ pub fn init(argc: usize, argv: [*][*:0]u8) !@This() {
         } else {
             return error.unknown_argument;
         }
-    }
-
-    // Check for required parameters.
-    if (options.GraphicsPlugin.len == 0) {
-        std.log.err("GraphicsPlugin parameter is required", .{});
-        showHelp();
-        return error.no_graphics_plugin;
     }
 
     try options.parseStrings();

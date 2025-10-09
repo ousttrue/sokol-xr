@@ -4,7 +4,7 @@ const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
 const c = xr_util.c;
 const xr = @import("openxr");
-const CHECK_XRCMD = xr_util.CHECK_XRCMD;
+const xr_result = @import("xr_result.zig");
 const geometry = @import("geometry.zig");
 const xr_linear = @import("xr_linear.zig");
 
@@ -135,34 +135,28 @@ pub fn getInstanceExtensions(_: *anyopaque) []const []const u8 {
     return &INSTANCE_EXTENSIONS;
 }
 
-// #if !defined(XR_USE_PLATFORM_MACOS)
-//     void DebugMessageCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message) {
-//         (void)source;
-//         (void)type;
-//         (void)id;
-//         (void)severity;
-//         Log::Write(Log::Level::Info, "GL Debug: " + std::string(message, 0, length));
-//     }
-// #endif  // !defined(XR_USE_PLATFORM_MACOS)
-
-pub fn initializeDevice(_self: *anyopaque, instance: xr.XrInstance, systemId: xr.XrSystemId) bool {
+pub fn initializeDevice(
+    _self: *anyopaque,
+    instance: xr.XrInstance,
+    systemId: xr.XrSystemId,
+) xr_result.Error!void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     // Extension function must be loaded by name
     var pfnGetOpenGLGraphicsRequirementsKHR: xr.PFN_xrGetOpenGLGraphicsRequirementsKHR = null;
-    CHECK_XRCMD(xr.xrGetInstanceProcAddr(
+    try xr_result.check(xr.xrGetInstanceProcAddr(
         instance,
         "xrGetOpenGLGraphicsRequirementsKHR",
         &pfnGetOpenGLGraphicsRequirementsKHR,
-    )) catch {
-        return false;
-    };
+    ));
 
     var graphicsRequirements = xr.XrGraphicsRequirementsOpenGLKHR{
         .type = xr.XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR,
     };
-    CHECK_XRCMD(pfnGetOpenGLGraphicsRequirementsKHR.?(instance, systemId, &graphicsRequirements)) catch {
-        return false;
-    };
+    try xr_result.check(pfnGetOpenGLGraphicsRequirementsKHR.?(
+        instance,
+        systemId,
+        &graphicsRequirements,
+    ));
 
     // Initialize the gl extensions. Note we have to open a window.
     var driverInstance = c.ksDriverInstance{};
@@ -244,8 +238,6 @@ pub fn initializeDevice(_self: *anyopaque, instance: xr.XrInstance, systemId: xr
     }
 
     self.initializeResources();
-
-    return true;
 }
 
 fn initializeResources(self: *@This()) void {

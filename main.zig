@@ -5,9 +5,47 @@
 const std = @import("std");
 const Options = @import("Options.zig");
 const PlatformPlugin = @import("PlatformPluginWin32.zig");
-const GraphicsPlugin = @import("GraphicsPluginOpengl.zig");
+const GraphicsPluginOpengl = @import("GraphicsPluginOpengl.zig");
+const GraphicsPluginD3D11 = @import("GraphicsPluginD3D11.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr_util = @import("xr_util.zig");
+const xr_result = @import("xr_result.zig");
+
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+    .log_level = .debug,
+};
+
+pub fn logFn(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const prefix = if (scope == .default) "" else "(" ++ @tagName(scope) ++ "): ";
+
+    var buf = std.io.FixedBufferStream([4 * 1024]u8){
+        .buffer = undefined,
+        .pos = 0,
+    };
+    var writer = buf.writer();
+    writer.print(prefix ++ format, args) catch {};
+
+    if (buf.pos >= buf.buffer.len) {
+        buf.pos = buf.buffer.len - 1;
+    }
+    buf.buffer[buf.pos] = 0;
+
+    const CSI = "\x1B[";
+    const begin = switch (message_level) {
+        .debug => CSI ++ "37m",
+        .info => CSI ++ "33m",
+        .warn => CSI ++ "35m",
+        .err => CSI ++ "31m",
+    };
+
+    std.debug.print("{s}{s}{s}0m\n", .{ begin, &buf.buffer, CSI });
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -47,7 +85,11 @@ pub fn main() !void {
         var platformPlugin = PlatformPlugin.init(options);
 
         // Create graphics API implementation.
-        var graphicsPlugin = try GraphicsPlugin.init(allocator);
+        var graphicsPlugin = switch (options.GraphicsPlugin) {
+            .D3D11 => try GraphicsPluginD3D11.init(allocator),
+            .OpenGL => try GraphicsPluginOpengl.init(allocator),
+            else => @panic("not impl"),
+        };
         defer graphicsPlugin.deinit();
 
         // Initialize the OpenXR program.
@@ -58,15 +100,24 @@ pub fn main() !void {
             platformPlugin.getInstanceExtensions(),
             platformPlugin.getInstanceCreateExtension(),
         );
-        try program.initializeSystem();
+
+        program.initializeSystem() catch |e| {
+            switch (e) {
+                xr_result.Error.XR_ERROR_FORM_FACTOR_UNAVAILABLE => {
+                    std.log.warn("{s}: VR DEVICE not ready", .{@errorName(e)});
+                    return;
+                },
+                else => {
+                    return e;
+                },
+            }
+        };
 
         try options.setEnvironmentBlendMode(try program.getPreferredBlendMode());
 
         platformPlugin.updateOptions(&options);
 
-        if (!program.initializeDevice()) {
-            xr_util.my_panic("initializeDevice", .{});
-        }
+        try program.initializeDevice();
         try program.initializeSession();
         try program.createSwapchains();
 

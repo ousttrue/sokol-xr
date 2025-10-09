@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const xr = @import("openxr");
-const xr_result = @import("xr_result");
 pub const c = if (builtin.target.abi.isAndroid())
     @cImport({
         @cInclude("android/sensor.h");
@@ -64,21 +63,8 @@ pub fn GetGraphicsBindingType(comptime target: std.Target) type {
     }
 }
 
-pub fn XR_FAILED(result: xr.XrResult) bool {
-    return @as(c_int, @intCast(result)) < 0;
-}
-
-pub fn CheckXrResult(
-    res: xr.XrResult,
-    // , originator: []const u8, sourceLocation : []const u8
-) !xr.XrResult {
-    if (XR_FAILED(res)) {
-        // return error.openxr; //ThrowXrResult(res, originator, sourceLocation);
-        const res_enum = @as(xr_result.XrResult, @enumFromInt(res));
-        std.log.err("XrResult({s})", .{@tagName(res_enum)});
-        return error.xr_result;
-    }
-    return res;
+pub fn XR_FAILED(res: xr.XrResult) bool {
+    return @as(c_int, @intCast(res)) < 0;
 }
 
 pub fn my_panic(comptime fmt: []const u8, args: anytype) noreturn {
@@ -90,10 +76,6 @@ pub fn assert(val: bool) !void {
     if (!val) {
         return error.assert;
     }
-}
-
-pub fn CHECK_XRCMD(cmd: xr.XrResult) !void {
-    _ = try CheckXrResult(cmd);
 }
 
 pub fn getXrReferenceSpaceCreateInfo(referenceSpaceTypeStr: []const u8) !xr.XrReferenceSpaceCreateInfo {
