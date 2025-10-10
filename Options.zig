@@ -11,6 +11,7 @@ pub const GraphicsPluginType = enum {
     Vulkan2,
     Vulkan,
     Metal,
+    Sokol,
 
     fn fromStr(s: []const u8) ?@This() {
         inline for (@typeInfo(@This()).@"enum".fields) |f| {

@@ -130,6 +130,16 @@ pub fn build(b: *std.Build) !void {
 
         const directxmath_dep = b.dependency("DirectXMath", .{});
         compiled.addIncludePath(directxmath_dep.path("Inc"));
+
+        // sokol
+        const sokol_dep = b.dependency("sokol", .{
+            .target = target,
+            .optimize = optimize,
+            // same as building sokol-zig with -Dgl=true
+            .gl = true,
+        });
+        compiled.root_module.addImport("sokol", sokol_dep.module("sokol"));
+
     } else if (target.result.abi.isAndroid()) {
         const libc_file = try ndk.LibCFile.make(b, ndk_path, target, API_LEVEL);
         // for compile

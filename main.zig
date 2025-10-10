@@ -7,6 +7,7 @@ const Options = @import("Options.zig");
 const PlatformPlugin = @import("PlatformPluginWin32.zig");
 const GraphicsPluginOpengl = @import("GraphicsPluginOpengl.zig");
 const GraphicsPluginD3D11 = @import("GraphicsPluginD3D11.zig");
+const GraphicsPluginSokol = @import("GraphicsPluginSokol.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
@@ -88,6 +89,7 @@ pub fn main() !void {
         var graphicsPlugin = switch (options.GraphicsPlugin) {
             .D3D11 => try GraphicsPluginD3D11.init(allocator),
             .OpenGL => try GraphicsPluginOpengl.init(allocator),
+            .Sokol => try GraphicsPluginSokol.init(allocator),
             else => @panic("not impl"),
         };
         defer graphicsPlugin.deinit();
