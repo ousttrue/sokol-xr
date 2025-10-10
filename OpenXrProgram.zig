@@ -35,12 +35,6 @@ sessionRunning: bool = false,
 eventDataBuffer: xr.XrEventDataBuffer = .{},
 input: InputState = .{},
 
-layers: std.array_list.Managed(*xr.XrCompositionLayerBaseHeader),
-layer: xr.XrCompositionLayerProjection = .{
-    .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-},
-projectionLayerViews: std.array_list.Managed(xr.XrCompositionLayerProjectionView),
-
 const ACCEPTABLE_BLENDMODES = [_]xr.XrEnvironmentBlendMode{
     xr.XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
     xr.XR_ENVIRONMENT_BLEND_MODE_ADDITIVE,
@@ -60,16 +54,11 @@ pub fn init(
         .views = std.array_list.Managed(xr.XrView).init(allocator),
         .swapchains = std.array_list.Managed(Swapchain).init(allocator),
         .swapchainImageMap = std.AutoHashMap(xr.XrSwapchain, []*xr.XrSwapchainImageBaseHeader).init(allocator),
-
-        .layers = .init(allocator),
-        .projectionLayerViews = .init(allocator),
     };
 }
 
 pub fn deinit(self: *@This()) void {
     std.log.debug("#### OpenXrProgram.deinit ####", .{});
-    self.projectionLayerViews.deinit();
-    self.layers.deinit();
     {
         var iterator = self.swapchainImageMap.iterator();
         while (iterator.next()) |entry| {
@@ -697,8 +686,6 @@ fn tryReadNextEvent(self: *@This()) !?*const xr.XrEventDataBaseHeader {
 }
 
 pub fn beginFrame(self: *@This()) !xr.XrFrameState {
-    try self.layers.resize(0);
-
     try xr_util.assert(self.session != null);
 
     var frameWaitInfo = xr.XrFrameWaitInfo{
@@ -740,82 +727,36 @@ pub fn locateView(self: *@This(), predictedDisplayTime: i64) !xr.XrViewState {
     return viewState;
 }
 
-pub fn renderFrame(
-    self: *@This(),
-    cubes: []geometry.Cube,
+pub fn endFrame(
+    self: @This(),
+    predictedDisplayTime: i64,
+    views: []xr.XrCompositionLayerProjectionView,
 ) !void {
-    try self.projectionLayerViews.resize(self.views.items.len);
-
-    // Render view to the appropriate part of the swapchain image.
-    for (0..self.swapchains.items.len) |i| {
-        // Each view has a separate swapchain which is acquired, rendered to, and released.
-        const viewSwapchain = self.swapchains.items[i];
-
-        var acquireInfo = xr.XrSwapchainImageAcquireInfo{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
-        };
-
-        var swapchainImageIndex: u32 = undefined;
-        try xr_result.check(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
-
-        var waitInfo = xr.XrSwapchainImageWaitInfo{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
-            .timeout = xr.XR_INFINITE_DURATION,
-        };
-        try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
-
-        self.projectionLayerViews.items[i] = .{
-            .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
-            .pose = self.views.items[i].pose,
-            .fov = self.views.items[i].fov,
-            .subImage = .{
-                .swapchain = viewSwapchain.handle,
-                .imageRect = .{
-                    .offset = .{ .x = 0, .y = 0 },
-                    .extent = .{
-                        .width = @intCast(viewSwapchain.width),
-                        .height = @intCast(viewSwapchain.height),
-                    },
-                },
-            },
-        };
-
-        if (self.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
-            const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
-            if (!self.graphics.renderView(
-                &self.projectionLayerViews.items[i],
-                swapchainImage,
-                self.colorSwapchainFormat,
-                cubes,
-            )) {
-                xr_util.my_panic("OOM", .{});
-            }
-
-            const releaseInfo = xr.XrSwapchainImageReleaseInfo{
-                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
-            };
-            try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
-        }
-    }
-
-    self.layer.space = self.appSpace;
-    self.layer.layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
-        xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
-    else
-        0;
-    self.layer.viewCount = @intCast(self.projectionLayerViews.items.len);
-    self.layer.views = &self.projectionLayerViews.items[0];
-
-    try self.layers.append(@ptrCast(&self.layer));
-}
-
-pub fn endFrame(self: @This(), predictedDisplayTime: i64) !void {
-    const frameEndInfo = xr.XrFrameEndInfo{
+    var frameEndInfo = xr.XrFrameEndInfo{
         .type = xr.XR_TYPE_FRAME_END_INFO,
         .displayTime = predictedDisplayTime,
         .environmentBlendMode = self.options.Parsed.EnvironmentBlendMode,
-        .layerCount = @intCast(self.layers.items.len),
-        .layers = if (self.layers.items.len > 0) &self.layers.items[0] else null,
+        .layerCount = 0,
+        .layers = null,
     };
+
+    var composition_layers: [1]*xr.XrCompositionLayerBaseHeader = undefined;
+    var composition_layer_projection: xr.XrCompositionLayerProjection = undefined;
+    if (views.len > 0) {
+        composition_layer_projection = .{
+            .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+            .space = self.appSpace,
+            .layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
+                xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
+            else
+                0,
+            .viewCount = @intCast(views.len),
+            .views = &views[0],
+        };
+        composition_layers[0] = @ptrCast(&composition_layer_projection);
+        frameEndInfo.layerCount = 1;
+        frameEndInfo.layers = &composition_layers[0];
+    }
+
     try xr_result.check(xr.xrEndFrame(self.session, &frameEndInfo));
 }

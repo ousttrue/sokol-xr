@@ -128,6 +128,9 @@ pub fn main() !void {
         var scene = try Scene.init(allocator, program.session);
         defer scene.deinit();
 
+        var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(allocator);
+        defer projectionLayerViews.deinit();
+
         while (!key_polling.quitKeyPressed) {
             var exitRenderLoop = false;
             try program.pollEvents(&exitRenderLoop, &requestRestart);
@@ -138,6 +141,7 @@ pub fn main() !void {
             if (program.sessionRunning) {
                 // program.pollActions();
                 const frame_state = try program.beginFrame();
+                try projectionLayerViews.resize(0);
                 if (frame_state.shouldRender == xr.XR_TRUE) {
                     //
                     const view_state = try program.locateView(frame_state.predictedDisplayTime);
@@ -154,10 +158,61 @@ pub fn main() !void {
                             frame_state.predictedDisplayTime,
                         );
 
-                        try program.renderFrame(cubes);
+                        // views = try program.renderFrame(cubes);
+                        try projectionLayerViews.resize(2);
+
+                        // Render view to the appropriate part of the swapchain image.
+                        for (program.swapchains.items, 0..) |viewSwapchain, i| {
+                            // Each view has a separate swapchain which is acquired, rendered to, and released.
+                            var acquireInfo = xr.XrSwapchainImageAcquireInfo{
+                                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
+                            };
+                            var swapchainImageIndex: u32 = undefined;
+                            try xr_result.check(xr.xrAcquireSwapchainImage(
+                                viewSwapchain.handle,
+                                &acquireInfo,
+                                &swapchainImageIndex,
+                            ));
+                            var waitInfo = xr.XrSwapchainImageWaitInfo{
+                                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+                                .timeout = xr.XR_INFINITE_DURATION,
+                            };
+                            try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+
+                            projectionLayerViews.items[i] = .{
+                                .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
+                                .pose = program.views.items[i].pose,
+                                .fov = program.views.items[i].fov,
+                                .subImage = .{
+                                    .swapchain = viewSwapchain.handle,
+                                    .imageRect = .{
+                                        .offset = .{ .x = 0, .y = 0 },
+                                        .extent = .{
+                                            .width = @intCast(viewSwapchain.width),
+                                            .height = @intCast(viewSwapchain.height),
+                                        },
+                                    },
+                                },
+                            };
+
+                            if (program.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
+                                const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
+                                _ = program.graphics.renderView(
+                                    &projectionLayerViews.items[i],
+                                    swapchainImage,
+                                    program.colorSwapchainFormat,
+                                    cubes,
+                                );
+
+                                const releaseInfo = xr.XrSwapchainImageReleaseInfo{
+                                    .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
+                                };
+                                try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+                            }
+                        }
                     }
                 }
-                try program.endFrame(frame_state.predictedDisplayTime);
+                try program.endFrame(frame_state.predictedDisplayTime, projectionLayerViews.items);
             } else {
                 // Throttle loop since xrWaitFrame won't be called.
                 std.Thread.sleep(std.time.ns_per_ms * 250);
