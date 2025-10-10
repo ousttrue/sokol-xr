@@ -764,7 +764,162 @@ pub fn renderFrame(self: *@This()) !void {
     var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(self.allocator);
     defer projectionLayerViews.deinit();
     if (frameState.shouldRender == xr.XR_TRUE) {
-        if (try self.renderLayer(frameState.predictedDisplayTime, &projectionLayerViews, &layer)) {
+        // if (try self.renderLayer(frameState.predictedDisplayTime, &projectionLayerViews, &layer)) {
+        // }
+
+        // locate
+        var viewLocateInfo = xr.XrViewLocateInfo{
+            .type = xr.XR_TYPE_VIEW_LOCATE_INFO,
+            .viewConfigurationType = self.options.Parsed.ViewConfigType,
+            .displayTime = frameState.predictedDisplayTime,
+            .space = self.appSpace,
+        };
+        var viewState = xr.XrViewState{
+            .type = xr.XR_TYPE_VIEW_STATE,
+        };
+        var viewCountOutput: u32 = undefined;
+        try xr_result.check(xr.xrLocateViews(
+            self.session,
+            &viewLocateInfo,
+            &viewState,
+            @intCast(self.views.items.len),
+            &viewCountOutput,
+            &self.views.items[0],
+        ));
+        if ((viewState.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) != 0 and
+            (viewState.viewStateFlags & xr.XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0)
+        {
+            // render
+            try xr_util.assert(viewCountOutput == self.views.items.len);
+            try xr_util.assert(viewCountOutput == self.configViews.items.len);
+            try xr_util.assert(viewCountOutput == self.swapchains.items.len);
+
+            try projectionLayerViews.resize(viewCountOutput);
+
+            // For each locatable space that we want to visualize, render a 25cm cube.
+            var cubes = std.array_list.Managed(geometry.Cube).init(self.allocator);
+            defer cubes.deinit();
+
+            for (self.visualizedSpaces.items) |visualizedSpace| {
+                var spaceLocation = xr.XrSpaceLocation{
+                    .type = xr.XR_TYPE_SPACE_LOCATION,
+                };
+                const res = xr.xrLocateSpace(
+                    visualizedSpace,
+                    self.appSpace,
+                    frameState.predictedDisplayTime,
+                    &spaceLocation,
+                );
+                try xr_util.assert(res == 0); //, "xrLocateSpace");
+                if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
+                    if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
+                        (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+                    {
+                        try cubes.append(.{
+                            .Pose = spaceLocation.pose,
+                            .Scale = .{ .x = 0.25, .y = 0.25, .z = 0.25 },
+                        });
+                    }
+                } else {
+                    std.log.debug("Unable to locate a visualized reference space in app space: {}", .{res});
+                }
+            }
+
+            // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
+            // true when the application has focus.
+
+            const hands = [2]u32{ Side.LEFT, Side.RIGHT };
+            for (hands) |hand| {
+                var spaceLocation = xr.XrSpaceLocation{
+                    .type = xr.XR_TYPE_SPACE_LOCATION,
+                };
+                const res = xr.xrLocateSpace(
+                    self.input.handSpace[hand],
+                    self.appSpace,
+                    frameState.predictedDisplayTime,
+                    &spaceLocation,
+                );
+                // std.debug.assert(res == 0); //, "xrLocateSpace");
+                if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
+                    if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
+                        (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+                    {
+                        const scale = 0.1 * self.input.handScale[hand];
+                        try cubes.append(.{ .Pose = spaceLocation.pose, .Scale = .{ .x = scale, .y = scale, .z = scale } });
+                    }
+                } else {
+                    // Tracking loss is expected when the hand is not active so only log a message
+                    // if the hand is active.
+                    if (self.input.handActive[hand] == xr.XR_TRUE) {
+                        const handName = [_][]const u8{ "left", "right" };
+                        std.log.debug("Unable to locate {s} hand action space in app space: {}", .{
+                            handName[hand],
+                            res,
+                        });
+                    }
+                }
+            }
+
+            // Render view to the appropriate part of the swapchain image.
+            for (0..viewCountOutput) |i| {
+                // Each view has a separate swapchain which is acquired, rendered to, and released.
+                const viewSwapchain = self.swapchains.items[i];
+
+                var acquireInfo = xr.XrSwapchainImageAcquireInfo{
+                    .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
+                };
+
+                var swapchainImageIndex: u32 = undefined;
+                try xr_result.check(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
+
+                var waitInfo = xr.XrSwapchainImageWaitInfo{
+                    .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+                    .timeout = xr.XR_INFINITE_DURATION,
+                };
+                try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+
+                projectionLayerViews.items[i] = .{
+                    .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
+                    .pose = self.views.items[i].pose,
+                    .fov = self.views.items[i].fov,
+                    .subImage = .{
+                        .swapchain = viewSwapchain.handle,
+                        .imageRect = .{
+                            .offset = .{ .x = 0, .y = 0 },
+                            .extent = .{
+                                .width = @intCast(viewSwapchain.width),
+                                .height = @intCast(viewSwapchain.height),
+                            },
+                        },
+                    },
+                };
+
+                if (self.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
+                    const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
+                    if (!self.graphics.renderView(
+                        &projectionLayerViews.items[i],
+                        swapchainImage,
+                        self.colorSwapchainFormat,
+                        cubes.items,
+                    )) {
+                        xr_util.my_panic("OOM", .{});
+                    }
+
+                    const releaseInfo = xr.XrSwapchainImageReleaseInfo{
+                        .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
+                    };
+                    try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+                }
+            }
+
+            layer.space = self.appSpace;
+            layer.layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
+                xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
+            else
+                0;
+            layer.viewCount = @intCast(projectionLayerViews.items.len);
+            layer.views = &projectionLayerViews.items[0];
+
             try layers.append(@ptrCast(&layer));
         }
     }
@@ -777,168 +932,6 @@ pub fn renderFrame(self: *@This()) !void {
         .layers = if (layers.items.len > 0) &layers.items[0] else null,
     };
     try xr_result.check(xr.xrEndFrame(self.session, &frameEndInfo));
-}
-
-fn renderLayer(
-    self: *@This(),
-    predictedDisplayTime: xr.XrTime,
-    projectionLayerViews: *std.array_list.Managed(xr.XrCompositionLayerProjectionView),
-    layer: *xr.XrCompositionLayerProjection,
-) !bool {
-    var viewLocateInfo = xr.XrViewLocateInfo{
-        .type = xr.XR_TYPE_VIEW_LOCATE_INFO,
-        .viewConfigurationType = self.options.Parsed.ViewConfigType,
-        .displayTime = predictedDisplayTime,
-        .space = self.appSpace,
-    };
-
-    var viewState = xr.XrViewState{
-        .type = xr.XR_TYPE_VIEW_STATE,
-    };
-
-    var viewCountOutput: u32 = undefined;
-    {
-        const res = xr.xrLocateViews(
-            self.session,
-            &viewLocateInfo,
-            &viewState,
-            @intCast(self.views.items.len),
-            &viewCountOutput,
-            &self.views.items[0],
-        );
-        try xr_util.assert(res == 0); //, "xrLocateViews");
-    }
-    if ((viewState.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) == 0 or
-        (viewState.viewStateFlags & xr.XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0)
-    {
-        return false; // There is no valid tracking poses for the views.
-    }
-
-    try xr_util.assert(viewCountOutput == self.views.items.len);
-    try xr_util.assert(viewCountOutput == self.configViews.items.len);
-    try xr_util.assert(viewCountOutput == self.swapchains.items.len);
-
-    try projectionLayerViews.resize(viewCountOutput);
-
-    // For each locatable space that we want to visualize, render a 25cm cube.
-    var cubes = std.array_list.Managed(geometry.Cube).init(self.allocator);
-    defer cubes.deinit();
-
-    for (self.visualizedSpaces.items) |visualizedSpace| {
-        var spaceLocation = xr.XrSpaceLocation{
-            .type = xr.XR_TYPE_SPACE_LOCATION,
-        };
-        const res = xr.xrLocateSpace(visualizedSpace, self.appSpace, predictedDisplayTime, &spaceLocation);
-        try xr_util.assert(res == 0); //, "xrLocateSpace");
-        if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
-            if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
-                (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
-            {
-                try cubes.append(.{
-                    .Pose = spaceLocation.pose,
-                    .Scale = .{ .x = 0.25, .y = 0.25, .z = 0.25 },
-                });
-            }
-        } else {
-            std.log.debug("Unable to locate a visualized reference space in app space: {}", .{res});
-        }
-    }
-
-    // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
-    // true when the application has focus.
-
-    const hands = [2]u32{ Side.LEFT, Side.RIGHT };
-    for (hands) |hand| {
-        var spaceLocation = xr.XrSpaceLocation{
-            .type = xr.XR_TYPE_SPACE_LOCATION,
-        };
-        const res = xr.xrLocateSpace(
-            self.input.handSpace[hand],
-            self.appSpace,
-            predictedDisplayTime,
-            &spaceLocation,
-        );
-        // std.debug.assert(res == 0); //, "xrLocateSpace");
-        if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
-            if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
-                (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
-            {
-                const scale = 0.1 * self.input.handScale[hand];
-                try cubes.append(.{ .Pose = spaceLocation.pose, .Scale = .{ .x = scale, .y = scale, .z = scale } });
-            }
-        } else {
-            // Tracking loss is expected when the hand is not active so only log a message
-            // if the hand is active.
-            if (self.input.handActive[hand] == xr.XR_TRUE) {
-                const handName = [_][]const u8{ "left", "right" };
-                std.log.debug("Unable to locate {s} hand action space in app space: {}", .{
-                    handName[hand],
-                    res,
-                });
-            }
-        }
-    }
-
-    // Render view to the appropriate part of the swapchain image.
-    for (0..viewCountOutput) |i| {
-        // Each view has a separate swapchain which is acquired, rendered to, and released.
-        const viewSwapchain = self.swapchains.items[i];
-
-        var acquireInfo = xr.XrSwapchainImageAcquireInfo{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
-        };
-
-        var swapchainImageIndex: u32 = undefined;
-        try xr_result.check(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
-
-        var waitInfo = xr.XrSwapchainImageWaitInfo{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
-            .timeout = xr.XR_INFINITE_DURATION,
-        };
-        try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
-
-        projectionLayerViews.items[i] = .{
-            .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
-            .pose = self.views.items[i].pose,
-            .fov = self.views.items[i].fov,
-            .subImage = .{
-                .swapchain = viewSwapchain.handle,
-                .imageRect = .{
-                    .offset = .{ .x = 0, .y = 0 },
-                    .extent = .{
-                        .width = @intCast(viewSwapchain.width),
-                        .height = @intCast(viewSwapchain.height),
-                    },
-                },
-            },
-        };
-
-        if (self.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
-            const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
-            if (!self.graphics.renderView(
-                &projectionLayerViews.items[i],
-                swapchainImage,
-                self.colorSwapchainFormat,
-                cubes.items,
-            )) {
-                xr_util.my_panic("OOM", .{});
-            }
-
-            const releaseInfo = xr.XrSwapchainImageReleaseInfo{
-                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
-            };
-            try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
-        }
-    }
-
-    layer.space = self.appSpace;
-    layer.layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
-        xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
-    else
-        0;
-    layer.viewCount = @intCast(projectionLayerViews.items.len);
-    layer.views = &projectionLayerViews.items[0];
-    return true;
 }
 
 fn initializeActions(self: *@This()) !void {
