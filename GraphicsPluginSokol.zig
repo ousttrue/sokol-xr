@@ -7,10 +7,12 @@ const xr_result = @import("xr_result.zig");
 const xr = @import("openxr");
 const geometry = @import("geometry.zig");
 const xr_gl = @import("xr_gl.zig");
+const xr_linear = @import("xr_linear.zig");
 
 const sokol = @import("sokol");
 const slog = sokol.log;
 const sg = sokol.gfx;
+const shd = @import("shd");
 
 // OpenGL backend
 const INSTANCE_EXTENSIONS = [_][]const u8{xr.XR_KHR_OPENGL_ENABLE_EXTENSION_NAME};
@@ -31,25 +33,24 @@ const SwapchainImageBufferNode = struct {
     imageBuffer: []xr.XrSwapchainImageOpenGLKHR = &.{},
 };
 
+const State = struct {
+    pip: sg.Pipeline = .{},
+    bind: sg.Bindings = .{},
+};
+
 allocator: std.mem.Allocator,
 window: c.ksGpuWindow = .{},
 graphicsBinding: xr_util.GetGraphicsBindingType(builtin.target) = .{},
 swapchainImageBufferList: std.SinglyLinkedList = .{},
-swapchainFramebuffer: c.GLuint = 0,
 imageMap: std.AutoHashMap(u32, sg.Attachments),
 
-// default pass action, clear to red
-pass_action: sg.PassAction = undefined,
+state: State = .{},
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .allocator = allocator,
         .imageMap = std.AutoHashMap(u32, sg.Attachments).init(allocator),
-    };
-    self.pass_action.colors[0] = .{
-        .load_action = .CLEAR,
-        .clear_value = .{ .r = 1.0, .g = 0.0, .b = 0.0, .a = 1.0 },
     };
 
     return self;
@@ -64,6 +65,7 @@ pub fn init(allocator: std.mem.Allocator) !GraphicsPlugin {
 
 pub fn destroy(_self: *anyopaque) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
+    self.imageMap.deinit();
     {
         var current = self.swapchainImageBufferList.first;
         while (current) |p| {
@@ -105,8 +107,73 @@ pub fn initializeDevice(
     });
     std.debug.assert(sg.isvalid());
 
-    // TODO: sokol
-    c.glGenFramebuffers(1, &self.swapchainFramebuffer);
+    // cube vertex buffer
+    const s = 0.5;
+    self.state.bind.vertex_buffers[0] = sg.makeBuffer(.{
+        .data = sg.asRange(&[_]f32{
+            // positions        colors
+            -s, -s, -s, 1.0, 0.0, 0.0, 1.0,
+            s,  -s, -s, 1.0, 0.0, 0.0, 1.0,
+            s,  s,  -s, 1.0, 0.0, 0.0, 1.0,
+            -s, s,  -s, 1.0, 0.0, 0.0, 1.0,
+
+            -s, -s, s,  0.0, 1.0, 0.0, 1.0,
+            s,  -s, s,  0.0, 1.0, 0.0, 1.0,
+            s,  s,  s,  0.0, 1.0, 0.0, 1.0,
+            -s, s,  s,  0.0, 1.0, 0.0, 1.0,
+
+            -s, -s, -s, 0.0, 0.0, 1.0, 1.0,
+            -s, s,  -s, 0.0, 0.0, 1.0, 1.0,
+            -s, s,  s,  0.0, 0.0, 1.0, 1.0,
+            -s, -s, s,  0.0, 0.0, 1.0, 1.0,
+
+            s,  -s, -s, 1.0, 0.5, 0.0, 1.0,
+            s,  s,  -s, 1.0, 0.5, 0.0, 1.0,
+            s,  s,  s,  1.0, 0.5, 0.0, 1.0,
+            s,  -s, s,  1.0, 0.5, 0.0, 1.0,
+
+            -s, -s, -s, 0.0, 0.5, 1.0, 1.0,
+            -s, -s, s,  0.0, 0.5, 1.0, 1.0,
+            s,  -s, s,  0.0, 0.5, 1.0, 1.0,
+            s,  -s, -s, 0.0, 0.5, 1.0, 1.0,
+
+            -s, s,  -s, 1.0, 0.0, 0.5, 1.0,
+            -s, s,  s,  1.0, 0.0, 0.5, 1.0,
+            s,  s,  s,  1.0, 0.0, 0.5, 1.0,
+            s,  s,  -s, 1.0, 0.0, 0.5, 1.0,
+        }),
+    });
+
+    // cube index buffer
+    self.state.bind.index_buffer = sg.makeBuffer(.{
+        .usage = .{ .index_buffer = true },
+        .data = sg.asRange(&[_]u16{
+            0,  1,  2,  0,  2,  3,
+            6,  5,  4,  7,  6,  4,
+            8,  9,  10, 8,  10, 11,
+            14, 13, 12, 15, 14, 12,
+            16, 17, 18, 16, 18, 19,
+            22, 21, 20, 23, 22, 20,
+        }),
+    });
+
+    // shader and pipeline object
+    self.state.pip = sg.makePipeline(.{
+        .shader = sg.makeShader(shd.cubeShaderDesc(sg.queryBackend())),
+        .layout = init: {
+            var l = sg.VertexLayoutState{};
+            l.attrs[shd.ATTR_cube_position].format = .FLOAT3;
+            l.attrs[shd.ATTR_cube_color0].format = .FLOAT4;
+            break :init l;
+        },
+        .index_type = .UINT16,
+        .depth = .{
+            .compare = .LESS_EQUAL,
+            .write_enabled = true,
+            .pixel_format = .DEPTH,
+        },
+        .cull_mode = .BACK,
+    });
 }
 
 pub fn selectColorSwapchainFormat(_self: *anyopaque, runtimeFormats: []i64) ?i64 {
@@ -153,32 +220,6 @@ pub fn getSupportedSwapchainSampleCount(_: *anyopaque, _: xr.XrViewConfiguration
     return 1;
 }
 
-pub fn renderView(
-    _self: *anyopaque,
-    layerView: *const xr.XrCompositionLayerProjectionView,
-    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
-    swapchainFormat: i64,
-    cubes: []geometry.Cube,
-) bool {
-    const self: *@This() = @ptrCast(@alignCast(_self));
-    _ = swapchainFormat;
-    _ = cubes;
-
-    const image = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(swapchainImage)).image;
-    sg.beginPass(.{
-        .action = self.pass_action,
-        .attachments = self.getAttachment(
-            image,
-            layerView.subImage.imageRect.extent.width,
-            layerView.subImage.imageRect.extent.height,
-        ),
-    });
-    sg.endPass();
-    sg.commit();
-
-    return true;
-}
-
 fn getAttachment(self: *@This(), colorTexture: u32, width: i32, height: i32) sg.Attachments {
     const attachments = self.imageMap.get(colorTexture) orelse blk: {
         const color_img = sg.makeImage(.{
@@ -213,4 +254,66 @@ fn getAttachment(self: *@This(), colorTexture: u32, width: i32, height: i32) sg.
         break :blk new_attachments;
     };
     return attachments;
+}
+
+pub fn renderView(
+    _self: *anyopaque,
+    layerView: *const xr.XrCompositionLayerProjectionView,
+    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
+    swapchainFormat: i64,
+    cubes: []geometry.Cube,
+) bool {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    _ = swapchainFormat;
+
+    const image = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(swapchainImage)).image;
+
+    sg.beginPass(.{
+        .action = .{
+            .colors = .{
+                .{
+                    .load_action = .CLEAR,
+                    .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1 },
+                },
+                .{},
+                .{},
+                .{},
+            },
+        },
+        .attachments = self.getAttachment(
+            image,
+            layerView.subImage.imageRect.extent.width,
+            layerView.subImage.imageRect.extent.height,
+        ),
+    });
+
+    {
+        const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, layerView.fov, 0.05, 100.0);
+        const toView = xr_linear.Matrix4x4f.createFromRigidTransform(layerView.pose);
+        const view = toView.invertRigidBody();
+        const vp = proj.multiply(view);
+        for (cubes) |cube| {
+            sg.applyPipeline(self.state.pip);
+            sg.applyBindings(self.state.bind);
+
+            const model = xr_linear.Matrix4x4f.createTranslationRotationScale(
+                cube.Pose.position,
+                cube.Pose.orientation,
+                cube.Scale,
+            );
+            const mvp = vp.multiply(model);
+
+            var vs_params = shd.VsParams{
+                .mvp = mvp.m,
+            };
+
+            sg.applyUniforms(shd.UB_vs_params, sg.asRange(&vs_params));
+            sg.draw(0, 36, 1);
+        }
+    }
+
+    sg.endPass();
+    sg.commit();
+
+    return true;
 }

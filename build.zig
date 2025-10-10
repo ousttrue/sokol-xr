@@ -1,6 +1,7 @@
 const std = @import("std");
 const zcc = @import("compile_commands");
 const zbk = @import("zbk");
+const sokol = @import("sokol");
 // const zbk = @import("zbk_dev");
 const ndk = zbk.android.ndk;
 const xr_util = @import("xr_util.zig");
@@ -138,8 +139,20 @@ pub fn build(b: *std.Build) !void {
             // same as building sokol-zig with -Dgl=true
             .gl = true,
         });
-        compiled.root_module.addImport("sokol", sokol_dep.module("sokol"));
+        const sokol_mod = sokol_dep.module("sokol");
+        compiled.root_module.addImport("sokol", sokol_mod);
 
+        const shdc_dep = sokol_dep.builder.dependency("shdc", .{});
+        // call shdc.createModule() helper function, this returns a `!*Build.Module`:
+        const shd_mod = try sokol.shdc.createModule(b, "shader", sokol_mod, .{
+            .shdc_dep = shdc_dep,
+            .input = "cube.glsl",
+            .output = "shader.zig",
+            .slang = .{
+                .glsl430 = true,
+            },
+        });
+        compiled.root_module.addImport("shd", shd_mod);
     } else if (target.result.abi.isAndroid()) {
         const libc_file = try ndk.LibCFile.make(b, ndk_path, target, API_LEVEL);
         // for compile
