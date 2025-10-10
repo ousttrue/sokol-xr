@@ -12,6 +12,7 @@ const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const xr = @import("openxr");
+const Scene = @import("Scene.zig");
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
@@ -124,6 +125,9 @@ pub fn main() !void {
         try program.initializeSession();
         try program.createSwapchains();
 
+        var scene = try Scene.init(allocator, program.session);
+        defer scene.deinit();
+
         while (!key_polling.quitKeyPressed) {
             var exitRenderLoop = false;
             try program.pollEvents(&exitRenderLoop, &requestRestart);
@@ -144,8 +148,13 @@ pub fn main() !void {
                         // try xr_util.assert(viewCountOutput == self.views.items.len);
                         // try xr_util.assert(viewCountOutput == self.configViews.items.len);
                         // try xr_util.assert(viewCountOutput == self.swapchains.items.len);
+                        const cubes = try scene.update(
+                            program.appSpace,
+                            &program.input,
+                            frame_state.predictedDisplayTime,
+                        );
 
-                        try program.renderFrame(frame_state.predictedDisplayTime);
+                        try program.renderFrame(cubes);
                     }
                 }
                 try program.endFrame(frame_state.predictedDisplayTime);
