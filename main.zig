@@ -11,6 +11,7 @@ const GraphicsPluginSokol = @import("GraphicsPluginSokol.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
+const xr = @import("openxr");
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
@@ -132,7 +133,22 @@ pub fn main() !void {
 
             if (program.sessionRunning) {
                 // program.pollActions();
-                try program.renderFrame();
+                const frame_state = try program.beginFrame();
+                if (frame_state.shouldRender == xr.XR_TRUE) {
+                    //
+                    const view_state = try program.locateView(frame_state.predictedDisplayTime);
+                    if ((view_state.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) != 0 and
+                        (view_state.viewStateFlags & xr.XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0)
+                    {
+                        // render
+                        // try xr_util.assert(viewCountOutput == self.views.items.len);
+                        // try xr_util.assert(viewCountOutput == self.configViews.items.len);
+                        // try xr_util.assert(viewCountOutput == self.swapchains.items.len);
+
+                        try program.renderFrame(frame_state.predictedDisplayTime);
+                    }
+                }
+                try program.endFrame(frame_state.predictedDisplayTime);
             } else {
                 // Throttle loop since xrWaitFrame won't be called.
                 std.Thread.sleep(std.time.ns_per_ms * 250);

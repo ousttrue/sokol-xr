@@ -54,6 +54,12 @@ sessionRunning: bool = false,
 eventDataBuffer: xr.XrEventDataBuffer = .{},
 input: InputState = .{},
 
+layers: std.array_list.Managed(*xr.XrCompositionLayerBaseHeader),
+layer: xr.XrCompositionLayerProjection = .{
+    .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+},
+projectionLayerViews: std.array_list.Managed(xr.XrCompositionLayerProjectionView),
+
 const ACCEPTABLE_BLENDMODES = [_]xr.XrEnvironmentBlendMode{
     xr.XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
     xr.XR_ENVIRONMENT_BLEND_MODE_ADDITIVE,
@@ -74,11 +80,16 @@ pub fn init(
         .views = std.array_list.Managed(xr.XrView).init(allocator),
         .swapchains = std.array_list.Managed(Swapchain).init(allocator),
         .swapchainImageMap = std.AutoHashMap(xr.XrSwapchain, []*xr.XrSwapchainImageBaseHeader).init(allocator),
+
+        .layers = .init(allocator),
+        .projectionLayerViews = .init(allocator),
     };
 }
 
 pub fn deinit(self: *@This()) void {
     std.log.debug("#### OpenXrProgram.deinit ####", .{});
+    self.projectionLayerViews.deinit();
+    self.layers.deinit();
     {
         var iterator = self.swapchainImageMap.iterator();
         while (iterator.next()) |entry| {
@@ -739,7 +750,9 @@ fn tryReadNextEvent(self: *@This()) !?*const xr.XrEventDataBaseHeader {
     xr_util.my_panic("xrPollEvent", .{});
 }
 
-pub fn renderFrame(self: *@This()) !void {
+pub fn beginFrame(self: *@This()) !xr.XrFrameState {
+    try self.layers.resize(0);
+
     try xr_util.assert(self.session != null);
 
     var frameWaitInfo = xr.XrFrameWaitInfo{
@@ -754,182 +767,170 @@ pub fn renderFrame(self: *@This()) !void {
         .type = xr.XR_TYPE_FRAME_BEGIN_INFO,
     };
     try xr_result.check(xr.xrBeginFrame(self.session, &frameBeginInfo));
+    // return frameState;
 
-    var layers = std.array_list.Managed(*xr.XrCompositionLayerBaseHeader).init(self.allocator);
-    defer layers.deinit();
-    var layer = xr.XrCompositionLayerProjection{
-        .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+    return frameState;
+}
+
+pub fn locateView(self: *@This(), predictedDisplayTime: i64) !xr.XrViewState {
+    var viewLocateInfo = xr.XrViewLocateInfo{
+        .type = xr.XR_TYPE_VIEW_LOCATE_INFO,
+        .viewConfigurationType = self.options.Parsed.ViewConfigType,
+        .displayTime = predictedDisplayTime,
+        .space = self.appSpace,
     };
+    var viewState = xr.XrViewState{
+        .type = xr.XR_TYPE_VIEW_STATE,
+    };
+    var viewCountOutput: u32 = undefined;
+    try xr_result.check(xr.xrLocateViews(
+        self.session,
+        &viewLocateInfo,
+        &viewState,
+        @intCast(self.views.items.len),
+        &viewCountOutput,
+        &self.views.items[0],
+    ));
+    return viewState;
+}
 
-    var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(self.allocator);
-    defer projectionLayerViews.deinit();
-    if (frameState.shouldRender == xr.XR_TRUE) {
-        // if (try self.renderLayer(frameState.predictedDisplayTime, &projectionLayerViews, &layer)) {
-        // }
+pub fn renderFrame(self: *@This(), predictedDisplayTime: i64) !void {
+    try self.projectionLayerViews.resize(self.views.items.len);
 
-        // locate
-        var viewLocateInfo = xr.XrViewLocateInfo{
-            .type = xr.XR_TYPE_VIEW_LOCATE_INFO,
-            .viewConfigurationType = self.options.Parsed.ViewConfigType,
-            .displayTime = frameState.predictedDisplayTime,
-            .space = self.appSpace,
+    // For each locatable space that we want to visualize, render a 25cm cube.
+    var cubes = std.array_list.Managed(geometry.Cube).init(self.allocator);
+    defer cubes.deinit();
+
+    for (self.visualizedSpaces.items) |visualizedSpace| {
+        var spaceLocation = xr.XrSpaceLocation{
+            .type = xr.XR_TYPE_SPACE_LOCATION,
         };
-        var viewState = xr.XrViewState{
-            .type = xr.XR_TYPE_VIEW_STATE,
-        };
-        var viewCountOutput: u32 = undefined;
-        try xr_result.check(xr.xrLocateViews(
-            self.session,
-            &viewLocateInfo,
-            &viewState,
-            @intCast(self.views.items.len),
-            &viewCountOutput,
-            &self.views.items[0],
-        ));
-        if ((viewState.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) != 0 and
-            (viewState.viewStateFlags & xr.XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0)
-        {
-            // render
-            try xr_util.assert(viewCountOutput == self.views.items.len);
-            try xr_util.assert(viewCountOutput == self.configViews.items.len);
-            try xr_util.assert(viewCountOutput == self.swapchains.items.len);
-
-            try projectionLayerViews.resize(viewCountOutput);
-
-            // For each locatable space that we want to visualize, render a 25cm cube.
-            var cubes = std.array_list.Managed(geometry.Cube).init(self.allocator);
-            defer cubes.deinit();
-
-            for (self.visualizedSpaces.items) |visualizedSpace| {
-                var spaceLocation = xr.XrSpaceLocation{
-                    .type = xr.XR_TYPE_SPACE_LOCATION,
-                };
-                const res = xr.xrLocateSpace(
-                    visualizedSpace,
-                    self.appSpace,
-                    frameState.predictedDisplayTime,
-                    &spaceLocation,
-                );
-                try xr_util.assert(res == 0); //, "xrLocateSpace");
-                if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
-                    if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
-                        (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
-                    {
-                        try cubes.append(.{
-                            .Pose = spaceLocation.pose,
-                            .Scale = .{ .x = 0.25, .y = 0.25, .z = 0.25 },
-                        });
-                    }
-                } else {
-                    std.log.debug("Unable to locate a visualized reference space in app space: {}", .{res});
-                }
+        const res = xr.xrLocateSpace(
+            visualizedSpace,
+            self.appSpace,
+            predictedDisplayTime,
+            &spaceLocation,
+        );
+        try xr_util.assert(res == 0); //, "xrLocateSpace");
+        if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
+            if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
+                (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+            {
+                try cubes.append(.{
+                    .Pose = spaceLocation.pose,
+                    .Scale = .{ .x = 0.25, .y = 0.25, .z = 0.25 },
+                });
             }
-
-            // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
-            // true when the application has focus.
-
-            const hands = [2]u32{ Side.LEFT, Side.RIGHT };
-            for (hands) |hand| {
-                var spaceLocation = xr.XrSpaceLocation{
-                    .type = xr.XR_TYPE_SPACE_LOCATION,
-                };
-                const res = xr.xrLocateSpace(
-                    self.input.handSpace[hand],
-                    self.appSpace,
-                    frameState.predictedDisplayTime,
-                    &spaceLocation,
-                );
-                // std.debug.assert(res == 0); //, "xrLocateSpace");
-                if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
-                    if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
-                        (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
-                    {
-                        const scale = 0.1 * self.input.handScale[hand];
-                        try cubes.append(.{ .Pose = spaceLocation.pose, .Scale = .{ .x = scale, .y = scale, .z = scale } });
-                    }
-                } else {
-                    // Tracking loss is expected when the hand is not active so only log a message
-                    // if the hand is active.
-                    if (self.input.handActive[hand] == xr.XR_TRUE) {
-                        const handName = [_][]const u8{ "left", "right" };
-                        std.log.debug("Unable to locate {s} hand action space in app space: {}", .{
-                            handName[hand],
-                            res,
-                        });
-                    }
-                }
-            }
-
-            // Render view to the appropriate part of the swapchain image.
-            for (0..viewCountOutput) |i| {
-                // Each view has a separate swapchain which is acquired, rendered to, and released.
-                const viewSwapchain = self.swapchains.items[i];
-
-                var acquireInfo = xr.XrSwapchainImageAcquireInfo{
-                    .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
-                };
-
-                var swapchainImageIndex: u32 = undefined;
-                try xr_result.check(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
-
-                var waitInfo = xr.XrSwapchainImageWaitInfo{
-                    .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
-                    .timeout = xr.XR_INFINITE_DURATION,
-                };
-                try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
-
-                projectionLayerViews.items[i] = .{
-                    .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
-                    .pose = self.views.items[i].pose,
-                    .fov = self.views.items[i].fov,
-                    .subImage = .{
-                        .swapchain = viewSwapchain.handle,
-                        .imageRect = .{
-                            .offset = .{ .x = 0, .y = 0 },
-                            .extent = .{
-                                .width = @intCast(viewSwapchain.width),
-                                .height = @intCast(viewSwapchain.height),
-                            },
-                        },
-                    },
-                };
-
-                if (self.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
-                    const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
-                    if (!self.graphics.renderView(
-                        &projectionLayerViews.items[i],
-                        swapchainImage,
-                        self.colorSwapchainFormat,
-                        cubes.items,
-                    )) {
-                        xr_util.my_panic("OOM", .{});
-                    }
-
-                    const releaseInfo = xr.XrSwapchainImageReleaseInfo{
-                        .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
-                    };
-                    try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
-                }
-            }
-
-            layer.space = self.appSpace;
-            layer.layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
-                xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
-            else
-                0;
-            layer.viewCount = @intCast(projectionLayerViews.items.len);
-            layer.views = &projectionLayerViews.items[0];
-
-            try layers.append(@ptrCast(&layer));
+        } else {
+            std.log.debug("Unable to locate a visualized reference space in app space: {}", .{res});
         }
     }
 
+    // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
+    // true when the application has focus.
+
+    const hands = [2]u32{ Side.LEFT, Side.RIGHT };
+    for (hands) |hand| {
+        var spaceLocation = xr.XrSpaceLocation{
+            .type = xr.XR_TYPE_SPACE_LOCATION,
+        };
+        const res = xr.xrLocateSpace(
+            self.input.handSpace[hand],
+            self.appSpace,
+            predictedDisplayTime,
+            &spaceLocation,
+        );
+        // std.debug.assert(res == 0); //, "xrLocateSpace");
+        if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
+            if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
+                (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+            {
+                const scale = 0.1 * self.input.handScale[hand];
+                try cubes.append(.{ .Pose = spaceLocation.pose, .Scale = .{ .x = scale, .y = scale, .z = scale } });
+            }
+        } else {
+            // Tracking loss is expected when the hand is not active so only log a message
+            // if the hand is active.
+            if (self.input.handActive[hand] == xr.XR_TRUE) {
+                const handName = [_][]const u8{ "left", "right" };
+                std.log.debug("Unable to locate {s} hand action space in app space: {}", .{
+                    handName[hand],
+                    res,
+                });
+            }
+        }
+    }
+
+    // Render view to the appropriate part of the swapchain image.
+    for (0..self.swapchains.items.len) |i| {
+        // Each view has a separate swapchain which is acquired, rendered to, and released.
+        const viewSwapchain = self.swapchains.items[i];
+
+        var acquireInfo = xr.XrSwapchainImageAcquireInfo{
+            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
+        };
+
+        var swapchainImageIndex: u32 = undefined;
+        try xr_result.check(xr.xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
+
+        var waitInfo = xr.XrSwapchainImageWaitInfo{
+            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+            .timeout = xr.XR_INFINITE_DURATION,
+        };
+        try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+
+        self.projectionLayerViews.items[i] = .{
+            .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
+            .pose = self.views.items[i].pose,
+            .fov = self.views.items[i].fov,
+            .subImage = .{
+                .swapchain = viewSwapchain.handle,
+                .imageRect = .{
+                    .offset = .{ .x = 0, .y = 0 },
+                    .extent = .{
+                        .width = @intCast(viewSwapchain.width),
+                        .height = @intCast(viewSwapchain.height),
+                    },
+                },
+            },
+        };
+
+        if (self.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
+            const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
+            if (!self.graphics.renderView(
+                &self.projectionLayerViews.items[i],
+                swapchainImage,
+                self.colorSwapchainFormat,
+                cubes.items,
+            )) {
+                xr_util.my_panic("OOM", .{});
+            }
+
+            const releaseInfo = xr.XrSwapchainImageReleaseInfo{
+                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
+            };
+            try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+        }
+    }
+
+    self.layer.space = self.appSpace;
+    self.layer.layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
+        xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
+    else
+        0;
+    self.layer.viewCount = @intCast(self.projectionLayerViews.items.len);
+    self.layer.views = &self.projectionLayerViews.items[0];
+
+    try self.layers.append(@ptrCast(&self.layer));
+}
+
+pub fn endFrame(self: @This(), predictedDisplayTime: i64) !void {
     const frameEndInfo = xr.XrFrameEndInfo{
         .type = xr.XR_TYPE_FRAME_END_INFO,
-        .displayTime = frameState.predictedDisplayTime,
+        .displayTime = predictedDisplayTime,
         .environmentBlendMode = self.options.Parsed.EnvironmentBlendMode,
-        .layerCount = @intCast(layers.items.len),
-        .layers = if (layers.items.len > 0) &layers.items[0] else null,
+        .layerCount = @intCast(self.layers.items.len),
+        .layers = if (self.layers.items.len > 0) &self.layers.items[0] else null,
     };
     try xr_result.check(xr.xrEndFrame(self.session, &frameEndInfo));
 }
