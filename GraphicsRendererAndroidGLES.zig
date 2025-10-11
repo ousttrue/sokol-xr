@@ -1,0 +1,257 @@
+const std = @import("std");
+const c = @cImport({
+    @cInclude("android/sensor.h");
+    @cInclude("EGL/egl.h");
+    @cInclude("GLES/gl.h");
+    @cInclude("GLES3/gl3.h");
+    @cInclude("GLES3/gl31.h");
+});
+const xr = @import("openxr");
+const xr_linear = @import("xr_linear.zig");
+const geometry = @import("geometry.zig");
+
+// The version statement has come on first line.
+const VertexShaderGlsl =
+    \\#version 320 es
+    \\
+    \\in vec3 VertexPos;
+    \\in vec3 VertexColor;
+    \\
+    \\out vec3 PSVertexColor;
+    \\
+    \\uniform mat4 ModelViewProjection;
+    \\
+    \\void main() {
+    \\   gl_Position = ModelViewProjection * vec4(VertexPos, 1.0);
+    \\   PSVertexColor = VertexColor;
+    \\}
+;
+
+// The version statement has come on first line.
+const FragmentShaderGlsl =
+    \\#version 320 es
+    \\
+    \\in lowp vec3 PSVertexColor;
+    \\out lowp vec4 FragColor;
+    \\
+    \\void main() {
+    \\   FragColor = vec4(PSVertexColor, 1);
+    \\}
+;
+
+fn CheckProgram(prog: c.GLuint) !void {
+    var r: c.GLint = 0;
+    c.glGetProgramiv(prog, c.GL_LINK_STATUS, &r);
+    if (r == c.GL_FALSE) {
+        var msg: [4096]u8 = undefined;
+        var length: c.GLsizei = undefined;
+        c.glGetProgramInfoLog(prog, @sizeOf(@TypeOf(msg)), &length, &msg[0]);
+        std.log.err("Link program failed: {s}", .{msg});
+        return error.shader_link_error;
+    }
+}
+
+fn CheckShader(shader: c.GLuint) !void {
+    var r: c.GLint = 0;
+    c.glGetShaderiv(shader, c.GL_COMPILE_STATUS, &r);
+    if (r == c.GL_FALSE) {
+        var msg: [4096]u8 = undefined;
+        var length: c.GLsizei = undefined;
+        c.glGetShaderInfoLog(shader, @sizeOf(@TypeOf(msg)), &length, &msg[0]);
+        std.log.err("Compile shader failed: {s}", .{msg});
+        return error.shader_compile_error;
+    }
+}
+
+swapchainFramebuffer: c.GLuint = 0,
+program: c.GLuint = 0,
+modelViewProjectionUniformLocation: c.GLint = 0,
+vertexAttribCoords: c.GLuint = 0,
+vertexAttribColor: c.GLuint = 0,
+vao: c.GLuint = 0,
+cubeVertexBuffer: c.GLuint = 0,
+cubeIndexBuffer: c.GLuint = 0,
+
+clearColor: [4]f32 = .{ 0, 0, 0, 0 },
+colorToDepthMap: std.AutoHashMap(u32, u32),
+
+pub fn init(allocator: std.mem.Allocator) !@This() {
+    var self = @This(){
+        .colorToDepthMap = .init(allocator),
+    };
+
+    std.log.debug("initializeResources", .{});
+
+    c.glGenFramebuffers(1, &self.swapchainFramebuffer);
+
+    const vertexShader = c.glCreateShader(c.GL_VERTEX_SHADER);
+    c.glShaderSource(vertexShader, 1, &&VertexShaderGlsl[0], null);
+    c.glCompileShader(vertexShader);
+    try CheckShader(vertexShader);
+
+    const fragmentShader = c.glCreateShader(c.GL_FRAGMENT_SHADER);
+    c.glShaderSource(fragmentShader, 1, &&FragmentShaderGlsl[0], null);
+    c.glCompileShader(fragmentShader);
+    try CheckShader(fragmentShader);
+
+    self.program = c.glCreateProgram();
+    c.glAttachShader(self.program, vertexShader);
+    c.glAttachShader(self.program, fragmentShader);
+    c.glLinkProgram(self.program);
+    try CheckProgram(self.program);
+
+    c.glDeleteShader(vertexShader);
+    c.glDeleteShader(fragmentShader);
+
+    self.modelViewProjectionUniformLocation = @intCast(c.glGetUniformLocation(self.program, "ModelViewProjection"));
+
+    self.vertexAttribCoords = @intCast(c.glGetAttribLocation(self.program, "VertexPos"));
+    self.vertexAttribColor = @intCast(c.glGetAttribLocation(self.program, "VertexColor"));
+
+    c.glGenBuffers(1, &self.cubeVertexBuffer);
+    c.glBindBuffer(c.GL_ARRAY_BUFFER, self.cubeVertexBuffer);
+    c.glBufferData(
+        c.GL_ARRAY_BUFFER,
+        @sizeOf(@TypeOf(geometry.c_cubeVertices)),
+        &geometry.c_cubeVertices[0],
+        c.GL_STATIC_DRAW,
+    );
+
+    c.glGenBuffers(1, &self.cubeIndexBuffer);
+    c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, self.cubeIndexBuffer);
+    c.glBufferData(
+        c.GL_ELEMENT_ARRAY_BUFFER,
+        @sizeOf(@TypeOf(geometry.c_cubeIndices)),
+        &geometry.c_cubeIndices[0],
+        c.GL_STATIC_DRAW,
+    );
+
+    c.glGenVertexArrays(1, &self.vao);
+    c.glBindVertexArray(self.vao);
+    c.glEnableVertexAttribArray(self.vertexAttribCoords);
+    c.glEnableVertexAttribArray(self.vertexAttribColor);
+    c.glBindBuffer(c.GL_ARRAY_BUFFER, self.cubeVertexBuffer);
+    c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, self.cubeIndexBuffer);
+    c.glVertexAttribPointer(self.vertexAttribCoords, 3, c.GL_FLOAT, c.GL_FALSE, @sizeOf(geometry.Vertex), null);
+    c.glVertexAttribPointer(
+        self.vertexAttribColor,
+        3,
+        c.GL_FLOAT,
+        c.GL_FALSE,
+        @sizeOf(geometry.Vertex),
+        @ptrFromInt(@sizeOf(xr.XrVector3f)),
+    );
+
+    return self;
+}
+
+pub fn deinit(self: *@This()) void {
+    self.colorToDepthMap.deinit();
+}
+
+pub fn render(
+    self: *@This(),
+    color_texture: u32,
+    viewport_width: i32,
+    viewport_height: i32,
+    vp: xr_linear.Matrix4x4f,
+    cubes: []geometry.Cube,
+) void {
+    c.glBindFramebuffer(c.GL_FRAMEBUFFER, self.swapchainFramebuffer);
+
+    c.glViewport(
+        0,
+        0,
+        viewport_width,
+        viewport_height,
+    );
+
+    c.glFrontFace(c.GL_CW);
+    c.glCullFace(c.GL_BACK);
+    c.glEnable(c.GL_CULL_FACE);
+    c.glEnable(c.GL_DEPTH_TEST);
+
+    const depth_texture = self.getDepthTexture(color_texture);
+
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_COLOR_ATTACHMENT0, c.GL_TEXTURE_2D, color_texture, 0);
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_DEPTH_ATTACHMENT, c.GL_TEXTURE_2D, depth_texture, 0);
+
+    // Clear swapchain and depth buffer.
+    c.glClearColor(self.clearColor[0], self.clearColor[1], self.clearColor[2], self.clearColor[3]);
+    c.glClearDepthf(1.0);
+    c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT | c.GL_STENCIL_BUFFER_BIT);
+
+    // Set shaders and uniform variables.
+    c.glUseProgram(self.program);
+
+    // Set cube primitive data.
+    c.glBindVertexArray(self.vao);
+
+    // Render each cube
+    for (cubes) |cube| {
+        // Compute the model-view-projection transform and set it..
+        const model = xr_linear.Matrix4x4f.createTranslationRotationScale(
+            cube.Pose.position,
+            cube.Pose.orientation,
+            cube.Scale,
+        );
+        const mvp = vp.multiply(model);
+
+        c.glUniformMatrix4fv(
+            self.modelViewProjectionUniformLocation,
+            1,
+            c.GL_FALSE,
+            &mvp.m[0],
+        );
+
+        // Draw the cube.
+        c.glDrawElements(
+            c.GL_TRIANGLES,
+            @sizeOf(@TypeOf(geometry.c_cubeIndices)),
+            c.GL_UNSIGNED_SHORT,
+            null,
+        );
+    }
+
+    c.glBindVertexArray(0);
+    c.glUseProgram(0);
+    c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
+}
+
+fn getDepthTexture(self: *@This(), colorTexture: u32) u32 {
+    // If a depth-stencil view has already been created for this back-buffer, use it.
+    if (self.colorToDepthMap.get(colorTexture)) |depthBuffer| {
+        return depthBuffer;
+    }
+
+    // This back-buffer has no corresponding depth-stencil texture, so create one with matching dimensions.
+    var width: c.GLint = undefined;
+    var height: c.GLint = undefined;
+    c.glBindTexture(c.GL_TEXTURE_2D, colorTexture);
+    c.glGetTexLevelParameteriv(c.GL_TEXTURE_2D, 0, c.GL_TEXTURE_WIDTH, &width);
+    c.glGetTexLevelParameteriv(c.GL_TEXTURE_2D, 0, c.GL_TEXTURE_HEIGHT, &height);
+
+    var depthTexture: u32 = undefined;
+    c.glGenTextures(1, &depthTexture);
+    c.glBindTexture(c.GL_TEXTURE_2D, depthTexture);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_CLAMP_TO_EDGE);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_CLAMP_TO_EDGE);
+    c.glTexImage2D(
+        c.GL_TEXTURE_2D,
+        0,
+        c.GL_DEPTH_COMPONENT24,
+        width,
+        height,
+        0,
+        c.GL_DEPTH_COMPONENT,
+        c.GL_UNSIGNED_INT,
+        null,
+    );
+
+    self.colorToDepthMap.put(colorTexture, depthTexture) catch {
+        @panic("OOM");
+    };
+    return depthTexture;
+}

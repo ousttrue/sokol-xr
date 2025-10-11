@@ -6,7 +6,10 @@ const GraphicsPlugin = @import("GraphicsPluginOpenglES.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr = @import("openxr");
 const xr_util = @import("xr_util.zig");
+const xr_result = @import("xr_result.zig");
 const Egl = @import("Egl.zig");
+const Scene = @import("Scene.zig");
+const Renderer = @import("GraphicsRendererAndroidGLES.zig");
 
 // https://ziggit.dev/t/set-debug-level-at-runtime/6196/3
 pub const std_options: std.Options = .{
@@ -47,12 +50,15 @@ pub fn logFn(
 
 fn updateOptionsFromSystemProperties(allocator: std.mem.Allocator) !Options {
     var options = Options{
-        .GraphicsPlugin = "OpenGLES",
+        .GraphicsPlugin = .OpenGLES,
     };
 
     var value: [xr.PROP_VALUE_MAX]c_char = undefined;
     if (xr.__system_property_get("debug.xr.graphics_plugin", &value[0]) != 0) {
-        options.GraphicsPlugin = try allocator.dupe(u8, std.mem.sliceTo(&value, 0));
+        // options.GraphicsPlugin = try allocator.dupe(u8, std.mem.sliceTo(&value, 0));
+        if (Options.GraphicsPluginType.fromStr(&value)) |graphics_type| {
+            options.GraphicsPlugin = graphics_type;
+        }
     }
 
     if (xr.__system_property_get("debug.xr.formFactor", &value[0]) != 0) {
@@ -205,15 +211,28 @@ export fn android_main(app: *xr.android_app) void {
 
     platform_plugin.updateOptions(&options);
 
-    if (!program.initializeDevice()) {
+    program.initializeDevice() catch {
         xr_util.my_panic("initializeDevice", .{});
-    }
+    };
     program.initializeSession() catch {
         xr_util.my_panic("initializeSession", .{});
     };
     program.createSwapchains() catch {
         xr_util.my_panic("createSwapchains", .{});
     };
+
+    var scene = Scene.init(allocator, program.session) catch {
+        xr_util.my_panic("Scene.init", .{});
+    };
+    defer scene.deinit();
+
+    var renderer = Renderer.init(allocator) catch {
+        xr_util.my_panic("Renderer.init", .{});
+    };
+    defer renderer.deinit();
+
+    var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(allocator);
+    defer projectionLayerViews.deinit();
 
     std.log.debug("loop start...", .{});
     var requestRestart = false;
@@ -253,8 +272,98 @@ export fn android_main(app: *xr.android_app) void {
         }
 
         // program.pollActions();
-        program.renderFrame() catch {
-            xr_util.my_panic("renderFrame", .{});
+        // program.renderFrame() catch {
+        //     xr_util.my_panic("renderFrame", .{});
+        // };
+        const frame_state = program.beginFrame() catch {
+            xr_util.my_panic("program.beginFrame", .{});
+        };
+        projectionLayerViews.resize(0) catch @panic("OOM");
+        if (frame_state.shouldRender == xr.XR_TRUE) {
+            //
+            const view_state = program.locateView(frame_state.predictedDisplayTime) catch {
+                xr_util.my_panic("program.locateView", .{});
+            };
+            if ((view_state.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) != 0 and
+                (view_state.viewStateFlags & xr.XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0)
+            {
+                // render
+                // try xr_util.assert(viewCountOutput == self.views.items.len);
+                // try xr_util.assert(viewCountOutput == self.configViews.items.len);
+                // try xr_util.assert(viewCountOutput == self.swapchains.items.len);
+                const cubes = scene.update(
+                    program.appSpace,
+                    &program.input,
+                    frame_state.predictedDisplayTime,
+                ) catch @panic("OOM");
+
+                projectionLayerViews.resize(2) catch @panic("OOM");
+
+                // Render view to the appropriate part of the swapchain image.
+                for (program.views.items, program.swapchains.items, 0..) |view, viewSwapchain, i| {
+                    // Each view has a separate swapchain which is acquired, rendered to, and released.
+                    var acquireInfo = xr.XrSwapchainImageAcquireInfo{
+                        .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
+                    };
+                    var swapchainImageIndex: u32 = undefined;
+                    if (xr_result.check(xr.xrAcquireSwapchainImage(
+                        viewSwapchain.handle,
+                        &acquireInfo,
+                        &swapchainImageIndex,
+                    ))) {
+                        var waitInfo = xr.XrSwapchainImageWaitInfo{
+                            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+                            .timeout = xr.XR_INFINITE_DURATION,
+                        };
+                        if (xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo))) {
+                            // composition
+                            projectionLayerViews.items[i] = .{
+                                .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
+                                .pose = view.pose,
+                                .fov = view.fov,
+                                .subImage = .{
+                                    .swapchain = viewSwapchain.handle,
+                                    .imageRect = .{
+                                        .offset = .{ .x = 0, .y = 0 },
+                                        .extent = .{
+                                            .width = @intCast(viewSwapchain.width),
+                                            .height = @intCast(viewSwapchain.height),
+                                        },
+                                    },
+                                },
+                            };
+
+                            // render
+                            switch (program.graphics.getSwapchainImage(
+                                viewSwapchain.handle,
+                                swapchainImageIndex,
+                            )) {
+                                .OpenGLES => |image| renderer.render(
+                                    image.image,
+                                    @intCast(viewSwapchain.width),
+                                    @intCast(viewSwapchain.height),
+                                    program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
+                                    cubes,
+                                ),
+                            }
+
+                            // commit
+                            const releaseInfo = xr.XrSwapchainImageReleaseInfo{
+                                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
+                            };
+                            xr_result.check(xr.xrReleaseSwapchainImage(
+                                viewSwapchain.handle,
+                                &releaseInfo,
+                            )) catch |e| {
+                                std.log.err("xr.xrReleaseSwapchainImage: {s}", .{@errorName(e)});
+                            };
+                        } else |_| {}
+                    } else |_| {}
+                }
+            }
+        }
+        program.endFrame(frame_state.predictedDisplayTime, projectionLayerViews.items) catch |e| {
+            std.log.err("program.endFrame: {s}", .{@errorName(e)});
         };
     }
 

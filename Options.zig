@@ -12,7 +12,7 @@ pub const GraphicsPluginType = enum {
     Vulkan,
     Metal,
 
-    fn fromStr(s: []const u8) ?@This() {
+    pub fn fromStr(s: []const u8) ?@This() {
         inline for (@typeInfo(@This()).@"enum".fields) |f| {
             if (std.mem.eql(u8, f.name, s)) {
                 return @as(@This(), @enumFromInt(f.value));

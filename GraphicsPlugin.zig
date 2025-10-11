@@ -1,12 +1,18 @@
+const builtin = @import("builtin");
 const xr = @import("openxr");
 const geometry = @import("geometry.zig");
 const xr_result = @import("xr_result.zig");
 const xr_linear = @import("xr_linear.zig");
 
-pub const SwapchainImage = union(enum) {
-    OpenGL: xr.XrSwapchainImageOpenGLKHR,
-    D3D11: xr.XrSwapchainImageD3D11KHR,
-};
+pub const SwapchainImage = if (builtin.abi.isAndroid())
+    union(enum) {
+        OpenGLES: xr.XrSwapchainImageOpenGLESKHR,
+    }
+else
+    union(enum) {
+        OpenGL: xr.XrSwapchainImageOpenGLKHR,
+        D3D11: xr.XrSwapchainImageD3D11KHR,
+    };
 
 pub const VTable = struct {
     getInstanceExtensions: *const fn () []const []const u8,
