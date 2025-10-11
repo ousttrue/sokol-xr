@@ -2,6 +2,7 @@ const std = @import("std");
 const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
+const xr_linear = @import("xr_linear.zig");
 const xr = @import("openxr");
 const geometry = @import("geometry.zig");
 const c = @cImport({
@@ -44,11 +45,20 @@ pub fn getSwapchainTextureValue(p: *const xr.XrSwapchainImageBaseHeader) usize {
     return @intFromPtr(image.texture);
 }
 
+pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
+    const proj = xr_linear.Matrix4x4f.createProjectionFov(.D3D, fov, 0.05, 100.0);
+    const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
+    const view = toView.invertRigidBody();
+    const vp = proj.multiply(view);
+    return vp;
+}
+
 const vtable = GraphicsPlugin.VTable{
     .getInstanceExtensions = &getInstanceExtensions,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
     .getSwapchainTextureValue = &getSwapchainTextureValue,
+    .calcViewProjectionMatrix = &calcViewProjectionMatrix,
     //
     .deinit = &destroy,
     .initializeDevice = &initializeDevice,
@@ -112,8 +122,7 @@ pub fn renderView(
     image: usize,
     format: i64,
     extent: xr.XrExtent2Di,
-    fov: xr.XrFovf,
-    view_pose: xr.XrPosef,
+    vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
 ) bool {
     const self: *@This() = @ptrCast(@alignCast(_self));
@@ -123,9 +132,7 @@ pub fn renderView(
         format,
         extent.width,
         extent.height,
-        &fov.angleLeft,
-        &view_pose.position.x,
-        &view_pose.orientation.x,
+        &vp.m[0],
         &cubes[0],
         cubes.len,
     );

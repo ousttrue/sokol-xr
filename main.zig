@@ -204,8 +204,7 @@ pub fn main() !void {
                                         .width = @intCast(viewSwapchain.width),
                                         .height = @intCast(viewSwapchain.height),
                                     },
-                                    view.fov,
-                                    view.pose,
+                                    program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
                                     cubes,
                                 );
 

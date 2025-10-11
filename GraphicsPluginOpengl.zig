@@ -60,11 +60,20 @@ pub fn getSwapchainTextureValue(base: *const xr.XrSwapchainImageBaseHeader) usiz
     return image_gl.image;
 }
 
+pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
+    const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
+    const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
+    const view = toView.invertRigidBody();
+    const vp = proj.multiply(view);
+    return vp;
+}
+
 const vtable = GraphicsPlugin.VTable{
     .getInstanceExtensions = &getInstanceExtensions,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
     .getSwapchainTextureValue = &getSwapchainTextureValue,
+    .calcViewProjectionMatrix = &calcViewProjectionMatrix,
     //
     .deinit = &destroy,
     .initializeDevice = &initializeDevice,
@@ -342,8 +351,7 @@ pub fn renderView(
     color_texture: usize,
     format: i64,
     extent: xr.XrExtent2Di,
-    fov: xr.XrFovf,
-    view_pose: xr.XrPosef,
+    vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
 ) bool {
     const self: *@This() = @ptrCast(@alignCast(_self));
@@ -377,11 +385,6 @@ pub fn renderView(
 
     // Set shaders and uniform variables.
     c.glUseProgram(self.program);
-
-    const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
-    const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
-    const view = toView.invertRigidBody();
-    const vp = proj.multiply(view);
 
     // Set cube primitive data.
     c.glBindVertexArray(self.vao);

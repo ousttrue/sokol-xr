@@ -1,12 +1,14 @@
 const xr = @import("openxr");
 const geometry = @import("geometry.zig");
 const xr_result = @import("xr_result.zig");
+const xr_linear = @import("xr_linear.zig");
 
 pub const VTable = struct {
     getInstanceExtensions: *const fn () []const []const u8,
     selectColorSwapchainFormat: *const fn (runtime_formats: []i64) ?i64,
     getSupportedSwapchainSampleCount: *const fn (config: xr.XrViewConfigurationView) u32,
     getSwapchainTextureValue: *const fn (base: *const xr.XrSwapchainImageBaseHeader) usize,
+    calcViewProjectionMatrix: *const fn (fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f,
     //
     deinit: *const fn (ptr: *anyopaque) void,
     initializeDevice: *const fn (
@@ -25,8 +27,7 @@ pub const VTable = struct {
         swapchain_texture: usize,
         swapchain_format: i64,
         extent: xr.XrExtent2Di,
-        fov: xr.XrFovf,
-        view_pose: xr.XrPosef,
+        view_projection_matrix: xr_linear.Matrix4x4f,
         cubes: []geometry.Cube,
     ) bool,
 };
@@ -50,6 +51,10 @@ pub fn getSupportedSwapchainSampleCount(self: @This(), config: xr.XrViewConfigur
 
 pub fn getSwapchainTextureValue(self: @This(), base: *const xr.XrSwapchainImageBaseHeader) usize {
     return self.vtable.getSwapchainTextureValue(base);
+}
+
+pub fn calcViewProjectionMatrix(self: @This(), fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
+    return self.vtable.calcViewProjectionMatrix(fov, view_pose);
 }
 
 // instance
@@ -83,9 +88,8 @@ pub fn renderView(
     texture: usize,
     format: i64,
     extent: xr.XrExtent2Di,
-    fov: xr.XrFovf,
-    view_pose: xr.XrPosef,
+    view_projection_matrix: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
 ) bool {
-    return self.vtable.renderView(self.ptr, texture, format, extent, fov, view_pose, cubes);
+    return self.vtable.renderView(self.ptr, texture, format, extent, view_projection_matrix, cubes);
 }
