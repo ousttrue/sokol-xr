@@ -9,8 +9,6 @@ const geometry = @import("geometry.zig");
 const xr_linear = @import("xr_linear.zig");
 const xr_gl = @import("xr_gl.zig");
 
-const INSTANCE_EXTENSIONS = [_][]const u8{"XR_KHR_opengl_enable"};
-
 const VertexShaderGlsl =
     \\#version 410
     \\
@@ -43,13 +41,34 @@ const SwapchainImageBufferNode = struct {
     imageBuffer: []xr.XrSwapchainImageOpenGLKHR = &.{},
 };
 
+const INSTANCE_EXTENSIONS = [_][]const u8{"XR_KHR_opengl_enable"};
+
+pub fn getInstanceExtensions() []const []const u8 {
+    return &INSTANCE_EXTENSIONS;
+}
+
+pub fn selectColorSwapchainFormat(runtimeFormats: []i64) ?i64 {
+    return xr_gl.selectColorSwapchainFormat(runtimeFormats);
+}
+
+pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
+    return 1;
+}
+
+pub fn getSwapchainTextureValue(base: *const xr.XrSwapchainImageBaseHeader) usize {
+    const image_gl = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(base));
+    return image_gl.image;
+}
+
 const vtable = GraphicsPlugin.VTable{
-    .deinit = &destroy,
     .getInstanceExtensions = &getInstanceExtensions,
-    .initializeDevice = &initializeDevice,
-    .getGraphicsBinding = &getGraphicsBinding,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
+    .getSwapchainTextureValue = &getSwapchainTextureValue,
+    //
+    .deinit = &destroy,
+    .initializeDevice = &initializeDevice,
+    .getGraphicsBinding = &getGraphicsBinding,
     .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
     .renderView = &renderView,
 };
@@ -131,10 +150,6 @@ pub fn destroy(_self: *anyopaque) void {
 //
 //         ksGpuWindow_Destroy(&window);
 //     }
-
-pub fn getInstanceExtensions(_: *anyopaque) []const []const u8 {
-    return &INSTANCE_EXTENSIONS;
-}
 
 pub fn initializeDevice(
     _self: *anyopaque,
@@ -249,10 +264,6 @@ fn checkProgram(prog: c.GLuint) void {
     }
 }
 
-pub fn selectColorSwapchainFormat(_: *anyopaque, runtimeFormats: []i64) ?i64 {
-    return xr_gl.selectColorSwapchainFormat(runtimeFormats);
-}
-
 pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
     const self: *@This() = @ptrCast(@alignCast(_self));
     return @ptrCast(&self.graphicsBinding);
@@ -326,30 +337,25 @@ fn getDepthTexture(self: *@This(), colorTexture: u32) !u32 {
     }
 }
 
-pub fn getSupportedSwapchainSampleCount(_: *anyopaque, _: xr.XrViewConfigurationView) u32 {
-    return 1;
-}
-
 pub fn renderView(
     _self: *anyopaque,
-    layerView: *const xr.XrCompositionLayerProjectionView,
-    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
-    swapchainFormat: i64,
+    color_texture: usize,
+    format: i64,
+    extent: xr.XrExtent2Di,
+    fov: xr.XrFovf,
+    view_pose: xr.XrPosef,
     cubes: []geometry.Cube,
 ) bool {
     const self: *@This() = @ptrCast(@alignCast(_self));
-    if (layerView.subImage.imageArrayIndex != 0) {
-        return false; // Texture arrays not supported.
-    }
-    _ = swapchainFormat; // Not used in this function for now.
+    _ = format;
 
     c.glBindFramebuffer(c.GL_FRAMEBUFFER, self.swapchainFramebuffer);
 
     c.glViewport(
-        @as(c.GLint, layerView.subImage.imageRect.offset.x),
-        @as(c.GLint, layerView.subImage.imageRect.offset.y),
-        @as(c.GLsizei, layerView.subImage.imageRect.extent.width),
-        @as(c.GLsizei, layerView.subImage.imageRect.extent.height),
+        0,
+        0,
+        extent.width,
+        extent.height,
     );
 
     c.glFrontFace(c.GL_CW);
@@ -357,13 +363,12 @@ pub fn renderView(
     c.glEnable(c.GL_CULL_FACE);
     c.glEnable(c.GL_DEPTH_TEST);
 
-    const colorTexture = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(swapchainImage)).image;
-    const depthTexture = self.getDepthTexture(colorTexture) catch {
+    const depth_texture = self.getDepthTexture(@intCast(color_texture)) catch {
         return false;
     };
 
-    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_COLOR_ATTACHMENT0, c.GL_TEXTURE_2D, colorTexture, 0);
-    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_DEPTH_ATTACHMENT, c.GL_TEXTURE_2D, depthTexture, 0);
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_COLOR_ATTACHMENT0, c.GL_TEXTURE_2D, @intCast(color_texture), 0);
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_DEPTH_ATTACHMENT, c.GL_TEXTURE_2D, depth_texture, 0);
 
     // Clear swapchain and depth buffer.
     c.glClearColor(self.clearColor[0], self.clearColor[1], self.clearColor[2], self.clearColor[3]);
@@ -373,8 +378,8 @@ pub fn renderView(
     // Set shaders and uniform variables.
     c.glUseProgram(self.program);
 
-    const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, layerView.fov, 0.05, 100.0);
-    const toView = xr_linear.Matrix4x4f.createFromRigidTransform(layerView.pose);
+    const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
+    const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
     const view = toView.invertRigidBody();
     const vp = proj.multiply(view);
 

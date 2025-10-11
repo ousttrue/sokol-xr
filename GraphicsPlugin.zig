@@ -3,16 +3,18 @@ const geometry = @import("geometry.zig");
 const xr_result = @import("xr_result.zig");
 
 pub const VTable = struct {
+    getInstanceExtensions: *const fn () []const []const u8,
+    selectColorSwapchainFormat: *const fn (runtime_formats: []i64) ?i64,
+    getSupportedSwapchainSampleCount: *const fn (config: xr.XrViewConfigurationView) u32,
+    getSwapchainTextureValue: *const fn (base: *const xr.XrSwapchainImageBaseHeader) usize,
+    //
     deinit: *const fn (ptr: *anyopaque) void,
-    getInstanceExtensions: *const fn (ptr: *anyopaque) []const []const u8,
     initializeDevice: *const fn (
         ptr: *anyopaque,
         instance: xr.XrInstance,
         systemId: xr.XrSystemId,
     ) xr_result.Error!void,
     getGraphicsBinding: *const fn (ptr: *anyopaque) ?*const xr.XrBaseInStructure,
-    selectColorSwapchainFormat: *const fn (ptr: *anyopaque, runtime_formats: []i64) ?i64,
-    getSupportedSwapchainSampleCount: *const fn (ptr: *anyopaque, config: xr.XrViewConfigurationView) u32,
     allocateSwapchainImageStructs: *const fn (
         ptr: *anyopaque,
         info: xr.XrSwapchainCreateInfo,
@@ -20,9 +22,11 @@ pub const VTable = struct {
     ) bool,
     renderView: *const fn (
         ptr: *anyopaque,
-        layerView: *const xr.XrCompositionLayerProjectionView,
-        swapchainImage: *const xr.XrSwapchainImageBaseHeader,
-        swapchainFormat: i64,
+        swapchain_texture: usize,
+        swapchain_format: i64,
+        extent: xr.XrExtent2Di,
+        fov: xr.XrFovf,
+        view_pose: xr.XrPosef,
         cubes: []geometry.Cube,
     ) bool,
 };
@@ -30,12 +34,28 @@ pub const VTable = struct {
 ptr: *anyopaque,
 vtable: *const VTable,
 
-pub fn deinit(self: @This()) void {
-    self.vtable.deinit(self.ptr);
-}
+// static
 
 pub fn getInstanceExtensions(self: @This()) []const []const u8 {
-    return self.vtable.getInstanceExtensions(self.ptr);
+    return self.vtable.getInstanceExtensions();
+}
+
+pub fn selectColorSwapchainFormat(self: @This(), runtimeFormats: []i64) ?i64 {
+    return self.vtable.selectColorSwapchainFormat(runtimeFormats);
+}
+
+pub fn getSupportedSwapchainSampleCount(self: @This(), config: xr.XrViewConfigurationView) u32 {
+    return self.vtable.getSupportedSwapchainSampleCount(config);
+}
+
+pub fn getSwapchainTextureValue(self: @This(), base: *const xr.XrSwapchainImageBaseHeader) usize {
+    return self.vtable.getSwapchainTextureValue(base);
+}
+
+// instance
+
+pub fn deinit(self: @This()) void {
+    self.vtable.deinit(self.ptr);
 }
 
 pub fn initializeDevice(
@@ -50,14 +70,6 @@ pub fn getGraphicsBinding(self: @This()) ?*const xr.XrBaseInStructure {
     return self.vtable.getGraphicsBinding(self.ptr);
 }
 
-pub fn selectColorSwapchainFormat(self: @This(), runtimeFormats: []i64) ?i64 {
-    return self.vtable.selectColorSwapchainFormat(self.ptr, runtimeFormats);
-}
-
-pub fn getSupportedSwapchainSampleCount(self: @This(), config: xr.XrViewConfigurationView) u32 {
-    return self.vtable.getSupportedSwapchainSampleCount(self.ptr, config);
-}
-
 pub fn allocateSwapchainImageStructs(
     self: *@This(),
     info: xr.XrSwapchainCreateInfo,
@@ -68,10 +80,12 @@ pub fn allocateSwapchainImageStructs(
 
 pub fn renderView(
     self: @This(),
-    layerView: *const xr.XrCompositionLayerProjectionView,
-    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
-    swapchainFormat: i64,
+    texture: usize,
+    format: i64,
+    extent: xr.XrExtent2Di,
+    fov: xr.XrFovf,
+    view_pose: xr.XrPosef,
     cubes: []geometry.Cube,
 ) bool {
-    return self.vtable.renderView(self.ptr, layerView, swapchainImage, swapchainFormat, cubes);
+    return self.vtable.renderView(self.ptr, texture, format, extent, fov, view_pose, cubes);
 }

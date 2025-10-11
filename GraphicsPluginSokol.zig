@@ -17,13 +17,32 @@ const shd = @import("shd");
 // OpenGL backend
 const INSTANCE_EXTENSIONS = [_][]const u8{xr.XR_KHR_OPENGL_ENABLE_EXTENSION_NAME};
 
+pub fn getInstanceExtensions() []const []const u8 {
+    return &INSTANCE_EXTENSIONS;
+}
+
+pub fn selectColorSwapchainFormat(runtimeFormats: []i64) ?i64 {
+    return xr_gl.selectColorSwapchainFormat(runtimeFormats);
+}
+
+pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
+    return 1;
+}
+
+pub fn getSwapchainTextureValue(base: *const xr.XrSwapchainImageBaseHeader) usize {
+    const image_gl = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(base));
+    return image_gl.image;
+}
+
 const vtable = GraphicsPlugin.VTable{
-    .deinit = &destroy,
     .getInstanceExtensions = &getInstanceExtensions,
-    .initializeDevice = &initializeDevice,
-    .getGraphicsBinding = &getGraphicsBinding,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
+    .getSwapchainTextureValue = &getSwapchainTextureValue,
+    //
+    .deinit = &destroy,
+    .initializeDevice = &initializeDevice,
+    .getGraphicsBinding = &getGraphicsBinding,
     .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
     .renderView = &renderView,
 };
@@ -78,10 +97,6 @@ pub fn destroy(_self: *anyopaque) void {
     }
     sg.shutdown();
     self.allocator.destroy(self);
-}
-
-pub fn getInstanceExtensions(_: *anyopaque) []const []const u8 {
-    return &INSTANCE_EXTENSIONS;
 }
 
 pub fn initializeDevice(
@@ -176,12 +191,6 @@ pub fn initializeDevice(
     });
 }
 
-pub fn selectColorSwapchainFormat(_self: *anyopaque, runtimeFormats: []i64) ?i64 {
-    const self: *@This() = @ptrCast(@alignCast(_self));
-    _ = self;
-    return xr_gl.selectColorSwapchainFormat(runtimeFormats);
-}
-
 pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
     const self: *@This() = @ptrCast(@alignCast(_self));
     return @ptrCast(&self.graphicsBinding);
@@ -214,10 +223,6 @@ pub fn allocateSwapchainImageStructs(
     }
 
     return true;
-}
-
-pub fn getSupportedSwapchainSampleCount(_: *anyopaque, _: xr.XrViewConfigurationView) u32 {
-    return 1;
 }
 
 fn getAttachment(self: *@This(), colorTexture: u32, width: i32, height: i32) sg.Attachments {
@@ -258,15 +263,15 @@ fn getAttachment(self: *@This(), colorTexture: u32, width: i32, height: i32) sg.
 
 pub fn renderView(
     _self: *anyopaque,
-    layerView: *const xr.XrCompositionLayerProjectionView,
-    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
+    image: usize,
     swapchainFormat: i64,
+    extent: xr.XrExtent2Di,
+    fov: xr.XrFovf,
+    view_pose: xr.XrPosef,
     cubes: []geometry.Cube,
 ) bool {
     const self: *@This() = @ptrCast(@alignCast(_self));
     _ = swapchainFormat;
-
-    const image = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(swapchainImage)).image;
 
     sg.beginPass(.{
         .action = .{
@@ -281,15 +286,15 @@ pub fn renderView(
             },
         },
         .attachments = self.getAttachment(
-            image,
-            layerView.subImage.imageRect.extent.width,
-            layerView.subImage.imageRect.extent.height,
+            @intCast(image),
+            extent.width,
+            extent.height,
         ),
     });
 
     {
-        const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, layerView.fov, 0.05, 100.0);
-        const toView = xr_linear.Matrix4x4f.createFromRigidTransform(layerView.pose);
+        const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
+        const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
         const view = toView.invertRigidBody();
         const vp = proj.multiply(view);
         for (cubes) |cube| {

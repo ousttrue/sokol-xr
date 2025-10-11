@@ -162,7 +162,7 @@ pub fn main() !void {
                         try projectionLayerViews.resize(2);
 
                         // Render view to the appropriate part of the swapchain image.
-                        for (program.swapchains.items, 0..) |viewSwapchain, i| {
+                        for (program.views.items, program.swapchains.items, 0..) |view, viewSwapchain, i| {
                             // Each view has a separate swapchain which is acquired, rendered to, and released.
                             var acquireInfo = xr.XrSwapchainImageAcquireInfo{
                                 .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
@@ -181,8 +181,8 @@ pub fn main() !void {
 
                             projectionLayerViews.items[i] = .{
                                 .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
-                                .pose = program.views.items[i].pose,
-                                .fov = program.views.items[i].fov,
+                                .pose = view.pose,
+                                .fov = view.fov,
                                 .subImage = .{
                                     .swapchain = viewSwapchain.handle,
                                     .imageRect = .{
@@ -198,9 +198,14 @@ pub fn main() !void {
                             if (program.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
                                 const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
                                 _ = program.graphics.renderView(
-                                    &projectionLayerViews.items[i],
-                                    swapchainImage,
+                                    program.graphics.getSwapchainTextureValue(swapchainImage),
                                     program.colorSwapchainFormat,
+                                    .{
+                                        .width = @intCast(viewSwapchain.width),
+                                        .height = @intCast(viewSwapchain.height),
+                                    },
+                                    view.fov,
+                                    view.pose,
                                     cubes,
                                 );
 

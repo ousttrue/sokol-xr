@@ -6,17 +6,53 @@ const xr = @import("openxr");
 const geometry = @import("geometry.zig");
 const c = @cImport({
     @cInclude("graphicsplugin_d3d11.h");
+    @cInclude("dxgi.h");
 });
 
 const INSTANCE_EXTENSIONS = [_][]const u8{xr.XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
 
+pub fn getInstanceExtensions() []const []const u8 {
+    return &INSTANCE_EXTENSIONS;
+}
+
+pub fn selectColorSwapchainFormat(runtimeFormats: []i64) ?i64 {
+    // List of supported color swapchain formats.
+    const SupportedColorSwapchainFormats = [_]i64{
+        c.DXGI_FORMAT_R8G8B8A8_UNORM,
+        c.DXGI_FORMAT_B8G8R8A8_UNORM,
+        c.DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+        c.DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+    };
+
+    for (runtimeFormats) |runtime| {
+        for (SupportedColorSwapchainFormats) |supported| {
+            if (runtime == supported) {
+                return runtime;
+            }
+        }
+    }
+
+    xr_util.my_panic("No runtime swapchain format supported for color swapchain", .{});
+}
+
+pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
+    return 1;
+}
+
+pub fn getSwapchainTextureValue(p: *const xr.XrSwapchainImageBaseHeader) usize {
+    const image: *const xr.XrSwapchainImageD3D11KHR = @ptrCast(p);
+    return @intFromPtr(image.texture);
+}
+
 const vtable = GraphicsPlugin.VTable{
-    .deinit = &destroy,
     .getInstanceExtensions = &getInstanceExtensions,
-    .initializeDevice = &initializeDevice,
-    .getGraphicsBinding = &getGraphicsBinding,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
+    .getSwapchainTextureValue = &getSwapchainTextureValue,
+    //
+    .deinit = &destroy,
+    .initializeDevice = &initializeDevice,
+    .getGraphicsBinding = &getGraphicsBinding,
     .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
     .renderView = &renderView,
 };
@@ -47,10 +83,6 @@ pub fn destroy(_self: *anyopaque) void {
     self.allocator.destroy(self);
 }
 
-pub fn getInstanceExtensions(_: *anyopaque) []const []const u8 {
-    return &INSTANCE_EXTENSIONS;
-}
-
 pub fn initializeDevice(
     _self: *anyopaque,
     instance: xr.XrInstance,
@@ -58,11 +90,6 @@ pub fn initializeDevice(
 ) xr_result.Error!void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     try xr_result.check(c.initializeDevice(self.impl, instance, systemId));
-}
-
-pub fn selectColorSwapchainFormat(_self: *anyopaque, runtimeFormats: []i64) ?i64 {
-    const self: *@This() = @ptrCast(@alignCast(_self));
-    return c.selectColorSwapchainFormat(self.impl, &runtimeFormats[0], runtimeFormats.len);
 }
 
 pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
@@ -82,16 +109,25 @@ pub fn allocateSwapchainImageStructs(
 
 pub fn renderView(
     _self: *anyopaque,
-    layerView: *const xr.XrCompositionLayerProjectionView,
-    swapchainImage: *const xr.XrSwapchainImageBaseHeader,
-    swapchainFormat: i64,
+    image: usize,
+    format: i64,
+    extent: xr.XrExtent2Di,
+    fov: xr.XrFovf,
+    view_pose: xr.XrPosef,
     cubes: []geometry.Cube,
 ) bool {
     const self: *@This() = @ptrCast(@alignCast(_self));
-    c.renderView(self.impl, @ptrCast(layerView), swapchainImage, swapchainFormat, &cubes[0], cubes.len);
+    c.renderView(
+        self.impl,
+        image,
+        format,
+        extent.width,
+        extent.height,
+        &fov.angleLeft,
+        &view_pose.position.x,
+        &view_pose.orientation.x,
+        &cubes[0],
+        cubes.len,
+    );
     return true;
-}
-
-pub fn getSupportedSwapchainSampleCount(_: *anyopaque, _: xr.XrViewConfigurationView) u32 {
-    return 1;
 }

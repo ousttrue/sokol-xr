@@ -122,25 +122,6 @@ struct D3D11GraphicsPlugin {
         CHECK_HRCMD(m_device->CreateBuffer(&indexBufferDesc, &indexBufferData, m_cubeIndexBuffer.ReleaseAndGetAddressOf()));
     }
 
-    int64_t SelectColorSwapchainFormat(const int64_t* runtimeFormats, size_t len) const {
-        // List of supported color swapchain formats.
-        constexpr DXGI_FORMAT SupportedColorSwapchainFormats[] = {
-            DXGI_FORMAT_R8G8B8A8_UNORM,
-            DXGI_FORMAT_B8G8R8A8_UNORM,
-            DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
-            DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
-        };
-
-        auto swapchainFormatIt =
-            std::find_first_of(runtimeFormats, runtimeFormats + len, std::begin(SupportedColorSwapchainFormats),
-                               std::end(SupportedColorSwapchainFormats));
-        if (swapchainFormatIt == runtimeFormats + len) {
-            THROW("No runtime swapchain format supported for color swapchain");
-        }
-
-        return *swapchainFormatIt;
-    }
-
     const XrBaseInStructure* GetGraphicsBinding() const { return reinterpret_cast<const XrBaseInStructure*>(&m_graphicsBinding); }
 
     void AllocateSwapchainImageStructs(XrSwapchainImageBaseHeader** headers, uint32_t capacity) {
@@ -191,19 +172,14 @@ struct D3D11GraphicsPlugin {
         return depthStencilView;
     }
 
-    void RenderView(const XrCompositionLayerProjectionView* layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-                    int64_t swapchainFormat, const Cube* cubes, size_t len) {
-        if (layerView->subImage.imageArrayIndex != 0) {  // Texture arrays not supported.
-            return;
-        }
-
-        ID3D11Texture2D* const colorTexture = reinterpret_cast<const XrSwapchainImageD3D11KHR*>(swapchainImage)->texture;
-
+    void RenderView(uintptr_t swapchainTexture, int64_t swapchainFormat, int width, int height, const float _fov[4],
+                    const float position[3], const float rotation[4], const Cube* cubes, size_t len) {
+        auto colorTexture = reinterpret_cast<ID3D11Texture2D*>(swapchainTexture);
         D3D11_VIEWPORT viewport = {
-            .TopLeftX = (float)layerView->subImage.imageRect.offset.x,
-            .TopLeftY = (float)layerView->subImage.imageRect.offset.y,
-            .Width = (float)layerView->subImage.imageRect.extent.width,
-            .Height = (float)layerView->subImage.imageRect.extent.height,
+            .TopLeftX = 0,
+            .TopLeftY = 0,
+            .Width = (float)width,
+            .Height = (float)height,
             .MinDepth = 0,  // D3D11_MIN_DEPTH,
             .MaxDepth = 1,  // D3D11_MAX_DEPTH,
         };
@@ -230,9 +206,19 @@ struct D3D11GraphicsPlugin {
         ID3D11RenderTargetView* renderTargets[] = {renderTargetView.Get()};
         m_deviceContext->OMSetRenderTargets((UINT)ArraySize(renderTargets), renderTargets, depthStencilView.Get());
 
-        const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView->pose));
+        XrPosef pose = {
+            .orientation = {rotation[0], rotation[1], rotation[2], rotation[3]},
+            .position = {position[0], position[1], position[2]},
+        };
+        const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(pose));
         XrMatrix4x4f projectionMatrix;
-        XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, layerView->fov, 0.05f, 100.0f);
+        XrFovf fov{
+            .angleLeft = _fov[0],
+            .angleRight = _fov[1],
+            .angleUp = _fov[2],
+            .angleDown = _fov[3],
+        };
+        XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, fov, 0.05f, 100.0f);
 
         // Set shaders and constant buffers.
         ViewProjectionConstantBuffer viewProjection;
@@ -295,16 +281,13 @@ void destroy(void* p) { delete reinterpret_cast<D3D11GraphicsPlugin*>(p); }
 int initializeDevice(void* p, void* instance, uint64_t systemId) {
     return reinterpret_cast<D3D11GraphicsPlugin*>(p)->InitializeDevice(reinterpret_cast<XrInstance>(instance), systemId);
 }
-int64_t selectColorSwapchainFormat(void* p, int64_t* formats, size_t len) {
-    return reinterpret_cast<D3D11GraphicsPlugin*>(p)->SelectColorSwapchainFormat(formats, len);
-}
 const void* getGraphicsBinding(void* p) { return reinterpret_cast<D3D11GraphicsPlugin*>(p)->GetGraphicsBinding(); }
 void allocateSwapchainImageStructs(void* p, void* pImage, size_t len) {
     reinterpret_cast<D3D11GraphicsPlugin*>(p)->AllocateSwapchainImageStructs(reinterpret_cast<XrSwapchainImageBaseHeader**>(pImage),
                                                                              len);
 }
-void renderView(void* p, const void* view, const void* image, int64_t format, const void* pCube, size_t len) {
-    reinterpret_cast<D3D11GraphicsPlugin*>(p)->RenderView(reinterpret_cast<const XrCompositionLayerProjectionView*>(view),
-                                                          reinterpret_cast<const XrSwapchainImageBaseHeader*>(image), format,
-                                                          reinterpret_cast<const Cube*>(pCube), len);
+void renderView(void* _p, uintptr_t texture, int64_t format, int width, int height, const float fov[4], const float view_position[3],
+                const float view_rotation[4], const void* pCube, size_t len) {
+    auto p = reinterpret_cast<D3D11GraphicsPlugin*>(_p);
+    p->RenderView(texture, format, width, height, fov, view_position, view_rotation, reinterpret_cast<const Cube*>(pCube), len);
 }

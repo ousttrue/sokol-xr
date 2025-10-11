@@ -348,9 +348,11 @@ pub fn allocateSwapchainImageStructs(
 
 pub fn renderView(
     _self: *anyopaque,
-    layerView: *const xr.XrCompositionLayerProjectionView,
     swapchainImage: *const xr.XrSwapchainImageBaseHeader,
     swapchainFormat: i64,
+    extent: xr.XrExtent2Di,
+    fov: xr.XrFovf,
+    view_pose: xr.XrPosef,
     cubes: []geometry.Cube,
 ) bool {
     const self: *@This() = @ptrCast(@alignCast(_self));
