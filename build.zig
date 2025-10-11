@@ -154,6 +154,28 @@ pub fn build(b: *std.Build) !void {
         });
         compiled.root_module.addImport("shd", shd_mod);
     } else if (target.result.abi.isAndroid()) {
+        // sokol
+        const sokol_dep = b.dependency("sokol", .{
+            .target = target,
+            .optimize = optimize,
+            // same as building sokol-zig with -Dgl=true
+            .gles3 = true,
+        });
+        const sokol_mod = sokol_dep.module("sokol");
+        compiled.root_module.addImport("sokol", sokol_mod);
+
+        const shdc_dep = sokol_dep.builder.dependency("shdc", .{});
+        // call shdc.createModule() helper function, this returns a `!*Build.Module`:
+        const shd_mod = try sokol.shdc.createModule(b, "shader", sokol_mod, .{
+            .shdc_dep = shdc_dep,
+            .input = "cube.glsl",
+            .output = "shader.zig",
+            .slang = .{
+                .glsl310es = true,
+            },
+        });
+        compiled.root_module.addImport("shd", shd_mod);
+
         const libc_file = try ndk.LibCFile.make(b, ndk_path, target, API_LEVEL);
         // for compile
         compiled.addSystemIncludePath(.{ .cwd_relative = libc_file.include_dir });
@@ -172,6 +194,13 @@ pub fn build(b: *std.Build) !void {
         compiled.linkSystemLibrary("GLESv1_CM");
         compiled.linkSystemLibrary("GLESv2");
         compiled.linkSystemLibrary("GLESv3");
+
+        // sokol use ndk
+        const sokol_clib = sokol_dep.artifact("sokol_clib");
+        sokol_clib.addSystemIncludePath(.{ .cwd_relative = libc_file.include_dir });
+        sokol_clib.addSystemIncludePath(.{ .cwd_relative = libc_file.sys_include_dir });
+        sokol_clib.setLibCFile(libc_file.path);
+        sokol_clib.addLibraryPath(.{ .cwd_relative = libc_file.crt_dir });
 
         // native_app_glue
         t.addIncludePath(.{ .cwd_relative = b.fmt("{s}/sources/android/native_app_glue", .{ndk_path}) });

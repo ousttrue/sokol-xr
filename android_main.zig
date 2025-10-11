@@ -9,7 +9,8 @@ const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const Egl = @import("Egl.zig");
 const Scene = @import("Scene.zig");
-const Renderer = @import("GraphicsRendererAndroidGLES.zig");
+const RendererGLES = @import("GraphicsRendererAndroidGLES.zig");
+const RendererSokol = @import("GraphicsRendererSokol.zig");
 
 // https://ziggit.dev/t/set-debug-level-at-runtime/6196/3
 pub const std_options: std.Options = .{
@@ -226,7 +227,7 @@ export fn android_main(app: *xr.android_app) void {
     };
     defer scene.deinit();
 
-    var renderer = Renderer.init(allocator) catch {
+    var renderer = RendererSokol.init(allocator) catch {
         xr_util.my_panic("Renderer.init", .{});
     };
     defer renderer.deinit();

@@ -17,7 +17,7 @@ imageMap: std.AutoHashMap(u32, sg.Attachments),
 
 state: State = .{},
 
-pub fn init(allocator: std.mem.Allocator) @This() {
+pub fn init(allocator: std.mem.Allocator) !@This() {
     var self = @This(){
         .allocator = allocator,
         .imageMap = .init(allocator),

@@ -129,7 +129,7 @@ pub fn main() !void {
         var scene = try Scene.init(allocator, program.session);
         defer scene.deinit();
 
-        var renderer = GraphicsRendererSokol.init(allocator);
+        var renderer = try GraphicsRendererSokol.init(allocator);
         defer renderer.deinit();
 
         var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(allocator);
