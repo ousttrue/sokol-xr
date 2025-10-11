@@ -25,7 +25,6 @@ appSpace: xr.XrSpace = null,
 configViews: std.array_list.Managed(xr.XrViewConfigurationView),
 views: std.array_list.Managed(xr.XrView),
 swapchains: std.array_list.Managed(Swapchain),
-swapchainImageMap: std.AutoHashMap(xr.XrSwapchain, []*xr.XrSwapchainImageBaseHeader),
 colorSwapchainFormat: i64 = -1,
 
 // Application's current lifecycle state according to the runtime
@@ -53,20 +52,11 @@ pub fn init(
         .configViews = std.array_list.Managed(xr.XrViewConfigurationView).init(allocator),
         .views = std.array_list.Managed(xr.XrView).init(allocator),
         .swapchains = std.array_list.Managed(Swapchain).init(allocator),
-        .swapchainImageMap = std.AutoHashMap(xr.XrSwapchain, []*xr.XrSwapchainImageBaseHeader).init(allocator),
     };
 }
 
 pub fn deinit(self: *@This()) void {
     std.log.debug("#### OpenXrProgram.deinit ####", .{});
-    {
-        var iterator = self.swapchainImageMap.iterator();
-        while (iterator.next()) |entry| {
-            self.allocator.free(entry.value_ptr.*);
-        }
-    }
-    self.swapchainImageMap.deinit();
-
     self.swapchains.deinit();
     self.views.deinit();
     self.configViews.deinit();
@@ -551,25 +541,23 @@ pub fn createSwapchains(self: *@This()) !void {
                 .handle = null,
             };
             try xr_result.check(xr.xrCreateSwapchain(self.session, &swapchainCreateInfo, &swapchain.handle));
-
             try self.swapchains.append(swapchain);
+
+            // const swapchainBuffer = try self.allocator.alloc(*xr.XrSwapchainImageBaseHeader, imageCount);
+            // if (!self.graphics.allocateSwapchainImageStructs(swapchainCreateInfo, swapchainBuffer)) {
+            //     return error.allocateSwapchainImageStructs;
+            // }
+            // try self.swapchainImageMap.put(swapchain.handle, swapchainBuffer);
 
             var imageCount: u32 = undefined;
             try xr_result.check(xr.xrEnumerateSwapchainImages(swapchain.handle, 0, &imageCount, null));
-            // XXX This should really just return XrSwapchainImageBaseHeader*
-
-            const swapchainBuffer = try self.allocator.alloc(*xr.XrSwapchainImageBaseHeader, imageCount);
-            if (!self.graphics.allocateSwapchainImageStructs(swapchainCreateInfo, swapchainBuffer)) {
-                return error.allocateSwapchainImageStructs;
-            }
+            const swapchainBuffer = self.graphics.allocateSwapchainImageStructs(swapchain.handle, imageCount);
             try xr_result.check(xr.xrEnumerateSwapchainImages(
                 swapchain.handle,
                 imageCount,
                 &imageCount,
-                swapchainBuffer[0],
+                swapchainBuffer,
             ));
-
-            try self.swapchainImageMap.put(swapchain.handle, swapchainBuffer);
         }
     }
 }

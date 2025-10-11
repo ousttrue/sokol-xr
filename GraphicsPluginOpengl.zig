@@ -55,11 +55,6 @@ pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
     return 1;
 }
 
-pub fn getSwapchainTextureValue(base: *const xr.XrSwapchainImageBaseHeader) usize {
-    const image_gl = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(base));
-    return image_gl.image;
-}
-
 pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
     const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
     const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
@@ -72,7 +67,6 @@ const vtable = GraphicsPlugin.VTable{
     .getInstanceExtensions = &getInstanceExtensions,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
-    .getSwapchainTextureValue = &getSwapchainTextureValue,
     .calcViewProjectionMatrix = &calcViewProjectionMatrix,
     //
     .deinit = &destroy,
@@ -86,7 +80,7 @@ allocator: std.mem.Allocator,
 window: c.ksGpuWindow = .{},
 graphicsBinding: xr_util.GetGraphicsBindingType(builtin.target) = .{},
 
-swapchainImageBufferList: std.SinglyLinkedList = .{},
+swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageOpenGLKHR),
 
 swapchainFramebuffer: c.GLuint = 0,
 program: c.GLuint = 0,
@@ -105,7 +99,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .allocator = allocator,
-        .colorToDepthMap = std.AutoHashMap(u32, u32).init(allocator),
+        .swapchainBufferMap = .init(allocator),
+        .colorToDepthMap = .init(allocator),
     };
     return self;
 }
@@ -122,15 +117,12 @@ pub fn destroy(_self: *anyopaque) void {
     self.colorToDepthMap.deinit();
     std.log.debug("#### GraphicsPluginOpengl.deinit ####", .{});
     {
-        var current = self.swapchainImageBufferList.first;
-        while (current) |p| {
-            std.log.debug("destroy list node", .{});
-            current = p.next;
-            const node: *SwapchainImageBufferNode = @fieldParentPtr("node", p);
-            self.allocator.free(node.imageBuffer);
-            self.allocator.destroy(node);
+        var it = self.swapchainBufferMap.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
         }
     }
+    self.swapchainBufferMap.deinit();
     self.allocator.destroy(self);
 }
 
@@ -280,30 +272,21 @@ pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
 
 pub fn allocateSwapchainImageStructs(
     _self: *anyopaque,
-    _: xr.XrSwapchainCreateInfo,
-    swapchainImageBase: []*xr.XrSwapchainImageBaseHeader,
-) bool {
+    swapchain: xr.XrSwapchain,
+    image_count: u32,
+) *xr.XrSwapchainImageBaseHeader {
     const self: *@This() = @ptrCast(@alignCast(_self));
     // Allocate and initialize the buffer of image structs
     // (must be sequential in memory for xrEnumerateSwapchainImages).
     // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-    var item = self.allocator.create(SwapchainImageBufferNode) catch {
-        return false;
-    };
-    // Keep the buffer alive by moving it into the list of buffers.
-    self.swapchainImageBufferList.prepend(&item.node);
-
-    item.imageBuffer = self.allocator.alloc(xr.XrSwapchainImageOpenGLKHR, swapchainImageBase.len) catch {
-        return false;
-    };
-    for (item.imageBuffer, 0..) |*buffer, i| {
-        buffer.* = .{
+    const images = self.allocator.alloc(xr.XrSwapchainImageOpenGLKHR, image_count) catch @panic("OOM");
+    for (images) |*image| {
+        image.* = .{
             .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
         };
-        swapchainImageBase[i] = @ptrCast(buffer);
     }
-
-    return true;
+    self.swapchainBufferMap.put(swapchain, images) catch @panic("OOM");
+    return @ptrCast(&images[0]);
 }
 
 fn getDepthTexture(self: *@This(), colorTexture: u32) !u32 {
@@ -348,14 +331,17 @@ fn getDepthTexture(self: *@This(), colorTexture: u32) !u32 {
 
 pub fn renderView(
     _self: *anyopaque,
-    color_texture: usize,
+    swapchain: xr.XrSwapchain,
+    image_index: u32,
     format: i64,
     extent: xr.XrExtent2Di,
     vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
-) bool {
+) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     _ = format;
+    const textures = self.swapchainBufferMap.get(swapchain).?;
+    const color_texture = textures[image_index].image;
 
     c.glBindFramebuffer(c.GL_FRAMEBUFFER, self.swapchainFramebuffer);
 
@@ -371,11 +357,11 @@ pub fn renderView(
     c.glEnable(c.GL_CULL_FACE);
     c.glEnable(c.GL_DEPTH_TEST);
 
-    const depth_texture = self.getDepthTexture(@intCast(color_texture)) catch {
-        return false;
+    const depth_texture = self.getDepthTexture(color_texture) catch {
+        return;
     };
 
-    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_COLOR_ATTACHMENT0, c.GL_TEXTURE_2D, @intCast(color_texture), 0);
+    c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_COLOR_ATTACHMENT0, c.GL_TEXTURE_2D, color_texture, 0);
     c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_DEPTH_ATTACHMENT, c.GL_TEXTURE_2D, depth_texture, 0);
 
     // Clear swapchain and depth buffer.
@@ -407,6 +393,4 @@ pub fn renderView(
     c.glBindVertexArray(0);
     c.glUseProgram(0);
     c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
-
-    return true;
 }

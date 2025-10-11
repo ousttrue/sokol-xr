@@ -124,18 +124,6 @@ struct D3D11GraphicsPlugin {
 
     const XrBaseInStructure* GetGraphicsBinding() const { return reinterpret_cast<const XrBaseInStructure*>(&m_graphicsBinding); }
 
-    void AllocateSwapchainImageStructs(XrSwapchainImageBaseHeader** headers, uint32_t capacity) {
-        // Allocate and initialize the buffer of image structs (must be sequential in memory for xrEnumerateSwapchainImages).
-        // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-        std::vector<XrSwapchainImageD3D11KHR> swapchainImageBuffer(capacity, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
-        for (size_t i = 0; i < capacity; ++i) {
-            headers[i] = reinterpret_cast<XrSwapchainImageBaseHeader*>(&swapchainImageBuffer[i]);
-        }
-
-        // Keep the buffer alive by moving it into the list of buffers.
-        m_swapchainImageBuffers.push_back(std::move(swapchainImageBuffer));
-    }
-
     ComPtr<ID3D11DepthStencilView> GetDepthStencilView(ID3D11Texture2D* colorTexture) {
         // If a depth-stencil view has already been created for this back-buffer, use it.
         auto depthBufferIt = m_colorToDepthMap.find(colorTexture);
@@ -172,8 +160,8 @@ struct D3D11GraphicsPlugin {
         return depthStencilView;
     }
 
-    void RenderView(uintptr_t swapchainTexture, int64_t swapchainFormat, int width, int height, const float m[16],
-                    const Cube* cubes, size_t len) {
+    void RenderView(void* swapchainTexture, int64_t swapchainFormat, int width, int height, const float m[16], const Cube* cubes,
+                    size_t len) {
         auto colorTexture = reinterpret_cast<ID3D11Texture2D*>(swapchainTexture);
         D3D11_VIEWPORT viewport = {
             .TopLeftX = 0,
@@ -208,8 +196,7 @@ struct D3D11GraphicsPlugin {
 
         // Set shaders and constant buffers.
         ViewProjectionConstantBuffer viewProjection;
-        XMStoreFloat4x4(&viewProjection.ViewProjection, 
-                XMLoadFloat4x4(reinterpret_cast<const XMFLOAT4X4*>(m)));
+        XMStoreFloat4x4(&viewProjection.ViewProjection, XMLoadFloat4x4(reinterpret_cast<const XMFLOAT4X4*>(m)));
         m_deviceContext->UpdateSubresource(m_viewProjectionCBuffer.Get(), 0, nullptr, &viewProjection, 0, 0);
 
         ID3D11Buffer* const constantBuffers[] = {m_modelCBuffer.Get(), m_viewProjectionCBuffer.Get()};
@@ -248,7 +235,6 @@ struct D3D11GraphicsPlugin {
     ComPtr<ID3D11Device> m_device;
     ComPtr<ID3D11DeviceContext> m_deviceContext;
     XrGraphicsBindingD3D11KHR m_graphicsBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
-    std::list<std::vector<XrSwapchainImageD3D11KHR>> m_swapchainImageBuffers;
     ComPtr<ID3D11VertexShader> m_vertexShader;
     ComPtr<ID3D11PixelShader> m_pixelShader;
     ComPtr<ID3D11InputLayout> m_inputLayout;
@@ -269,12 +255,7 @@ int initializeDevice(void* p, void* instance, uint64_t systemId) {
     return reinterpret_cast<D3D11GraphicsPlugin*>(p)->InitializeDevice(reinterpret_cast<XrInstance>(instance), systemId);
 }
 const void* getGraphicsBinding(void* p) { return reinterpret_cast<D3D11GraphicsPlugin*>(p)->GetGraphicsBinding(); }
-void allocateSwapchainImageStructs(void* p, void* pImage, size_t len) {
-    reinterpret_cast<D3D11GraphicsPlugin*>(p)->AllocateSwapchainImageStructs(reinterpret_cast<XrSwapchainImageBaseHeader**>(pImage),
-                                                                             len);
-}
-void renderView(void* _p, uintptr_t texture, int64_t format, int width, int height, const float m[16], const void* pCube,
-                size_t len) {
+void renderView(void* _p, void* texture, int64_t format, int width, int height, const float m[16], const void* pCube, size_t len) {
     auto p = reinterpret_cast<D3D11GraphicsPlugin*>(_p);
     p->RenderView(texture, format, width, height, m, reinterpret_cast<const Cube*>(pCube), len);
 }

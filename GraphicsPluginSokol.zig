@@ -29,11 +29,6 @@ pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
     return 1;
 }
 
-pub fn getSwapchainTextureValue(base: *const xr.XrSwapchainImageBaseHeader) usize {
-    const image_gl = @as(*const xr.XrSwapchainImageOpenGLKHR, @ptrCast(base));
-    return image_gl.image;
-}
-
 pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
     const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
     const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
@@ -46,7 +41,6 @@ const vtable = GraphicsPlugin.VTable{
     .getInstanceExtensions = &getInstanceExtensions,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
-    .getSwapchainTextureValue = &getSwapchainTextureValue,
     .calcViewProjectionMatrix = &calcViewProjectionMatrix,
     //
     .deinit = &destroy,
@@ -69,7 +63,7 @@ const State = struct {
 allocator: std.mem.Allocator,
 window: c.ksGpuWindow = .{},
 graphicsBinding: xr_util.GetGraphicsBindingType(builtin.target) = .{},
-swapchainImageBufferList: std.SinglyLinkedList = .{},
+swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageOpenGLKHR),
 imageMap: std.AutoHashMap(u32, sg.Attachments),
 
 state: State = .{},
@@ -78,9 +72,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .allocator = allocator,
-        .imageMap = std.AutoHashMap(u32, sg.Attachments).init(allocator),
+        .swapchainBufferMap = .init(allocator),
+        .imageMap = .init(allocator),
     };
-
     return self;
 }
 
@@ -95,14 +89,11 @@ pub fn destroy(_self: *anyopaque) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     self.imageMap.deinit();
     {
-        var current = self.swapchainImageBufferList.first;
-        while (current) |p| {
-            std.log.debug("destroy list node", .{});
-            current = p.next;
-            const node: *SwapchainImageBufferNode = @fieldParentPtr("node", p);
-            self.allocator.free(node.imageBuffer);
-            self.allocator.destroy(node);
+        var it = self.swapchainBufferMap.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
         }
+        self.swapchainBufferMap.deinit();
     }
     sg.shutdown();
     self.allocator.destroy(self);
@@ -207,31 +198,21 @@ pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
 
 pub fn allocateSwapchainImageStructs(
     _self: *anyopaque,
-    info: xr.XrSwapchainCreateInfo,
-    swapchainImageBase: []*xr.XrSwapchainImageBaseHeader,
-) bool {
+    swapchain: xr.XrSwapchain,
+    image_count: u32,
+) *xr.XrSwapchainImageBaseHeader {
     const self: *@This() = @ptrCast(@alignCast(_self));
-    _ = info;
     // Allocate and initialize the buffer of image structs
     // (must be sequential in memory for xrEnumerateSwapchainImages).
     // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-    var item = self.allocator.create(SwapchainImageBufferNode) catch {
-        return false;
-    };
-    // Keep the buffer alive by moving it into the list of buffers.
-    self.swapchainImageBufferList.prepend(&item.node);
-
-    item.imageBuffer = self.allocator.alloc(xr.XrSwapchainImageOpenGLKHR, swapchainImageBase.len) catch {
-        return false;
-    };
-    for (item.imageBuffer, 0..) |*buffer, i| {
-        buffer.* = .{
+    const images = self.allocator.alloc(xr.XrSwapchainImageOpenGLKHR, image_count) catch @panic("OOM");
+    for (images) |*image| {
+        image.* = .{
             .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
         };
-        swapchainImageBase[i] = @ptrCast(buffer);
     }
-
-    return true;
+    self.swapchainBufferMap.put(swapchain, images) catch @panic("OOM");
+    return @ptrCast(&images[0]);
 }
 
 fn getAttachment(self: *@This(), colorTexture: u32, width: i32, height: i32) sg.Attachments {
@@ -272,14 +253,17 @@ fn getAttachment(self: *@This(), colorTexture: u32, width: i32, height: i32) sg.
 
 pub fn renderView(
     _self: *anyopaque,
-    image: usize,
+    swapchain: xr.XrSwapchain,
+    image_index: u32,
     swapchainFormat: i64,
     extent: xr.XrExtent2Di,
     vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
-) bool {
+) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     _ = swapchainFormat;
+    const textures = self.swapchainBufferMap.get(swapchain).?;
+    const color_texture = textures[image_index].image;
 
     sg.beginPass(.{
         .action = .{
@@ -294,7 +278,7 @@ pub fn renderView(
             },
         },
         .attachments = self.getAttachment(
-            @intCast(image),
+            color_texture,
             extent.width,
             extent.height,
         ),
@@ -323,6 +307,4 @@ pub fn renderView(
 
     sg.endPass();
     sg.commit();
-
-    return true;
 }

@@ -179,6 +179,7 @@ pub fn main() !void {
                             };
                             try xr_result.check(xr.xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
 
+                            // composition
                             projectionLayerViews.items[i] = .{
                                 .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
                                 .pose = view.pose,
@@ -195,24 +196,24 @@ pub fn main() !void {
                                 },
                             };
 
-                            if (program.swapchainImageMap.get(viewSwapchain.handle)) |imageBuffers| {
-                                const swapchainImage: *const xr.XrSwapchainImageBaseHeader = imageBuffers[swapchainImageIndex];
-                                _ = program.graphics.renderView(
-                                    program.graphics.getSwapchainTextureValue(swapchainImage),
-                                    program.colorSwapchainFormat,
-                                    .{
-                                        .width = @intCast(viewSwapchain.width),
-                                        .height = @intCast(viewSwapchain.height),
-                                    },
-                                    program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
-                                    cubes,
-                                );
+                            // render
+                            program.graphics.renderView(
+                                viewSwapchain.handle,
+                                swapchainImageIndex,
+                                program.colorSwapchainFormat,
+                                .{
+                                    .width = @intCast(viewSwapchain.width),
+                                    .height = @intCast(viewSwapchain.height),
+                                },
+                                program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
+                                cubes,
+                            );
 
-                                const releaseInfo = xr.XrSwapchainImageReleaseInfo{
-                                    .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
-                                };
-                                try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
-                            }
+                            // commit
+                            const releaseInfo = xr.XrSwapchainImageReleaseInfo{
+                                .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
+                            };
+                            try xr_result.check(xr.xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
                         }
                     }
                 }

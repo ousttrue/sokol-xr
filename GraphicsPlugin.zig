@@ -7,7 +7,6 @@ pub const VTable = struct {
     getInstanceExtensions: *const fn () []const []const u8,
     selectColorSwapchainFormat: *const fn (runtime_formats: []i64) ?i64,
     getSupportedSwapchainSampleCount: *const fn (config: xr.XrViewConfigurationView) u32,
-    getSwapchainTextureValue: *const fn (base: *const xr.XrSwapchainImageBaseHeader) usize,
     calcViewProjectionMatrix: *const fn (fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f,
     //
     deinit: *const fn (ptr: *anyopaque) void,
@@ -19,17 +18,18 @@ pub const VTable = struct {
     getGraphicsBinding: *const fn (ptr: *anyopaque) ?*const xr.XrBaseInStructure,
     allocateSwapchainImageStructs: *const fn (
         ptr: *anyopaque,
-        info: xr.XrSwapchainCreateInfo,
-        swapchainImageBase: []*xr.XrSwapchainImageBaseHeader,
-    ) bool,
+        swapchain: xr.XrSwapchain,
+        image_count: u32,
+    ) *xr.XrSwapchainImageBaseHeader,
     renderView: *const fn (
         ptr: *anyopaque,
-        swapchain_texture: usize,
+        swapchain: xr.XrSwapchain,
+        image_index: u32,
         swapchain_format: i64,
         extent: xr.XrExtent2Di,
         view_projection_matrix: xr_linear.Matrix4x4f,
         cubes: []geometry.Cube,
-    ) bool,
+    ) void,
 };
 
 ptr: *anyopaque,
@@ -47,10 +47,6 @@ pub fn selectColorSwapchainFormat(self: @This(), runtimeFormats: []i64) ?i64 {
 
 pub fn getSupportedSwapchainSampleCount(self: @This(), config: xr.XrViewConfigurationView) u32 {
     return self.vtable.getSupportedSwapchainSampleCount(config);
-}
-
-pub fn getSwapchainTextureValue(self: @This(), base: *const xr.XrSwapchainImageBaseHeader) usize {
-    return self.vtable.getSwapchainTextureValue(base);
 }
 
 pub fn calcViewProjectionMatrix(self: @This(), fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
@@ -77,19 +73,28 @@ pub fn getGraphicsBinding(self: @This()) ?*const xr.XrBaseInStructure {
 
 pub fn allocateSwapchainImageStructs(
     self: *@This(),
-    info: xr.XrSwapchainCreateInfo,
-    swapchainImageBase: []*xr.XrSwapchainImageBaseHeader,
-) bool {
-    return self.vtable.allocateSwapchainImageStructs(self.ptr, info, swapchainImageBase);
+    swapchain: xr.XrSwapchain,
+    image_count: u32,
+) *xr.XrSwapchainImageBaseHeader {
+    return self.vtable.allocateSwapchainImageStructs(self.ptr, swapchain, image_count);
 }
 
 pub fn renderView(
     self: @This(),
-    texture: usize,
+    swapchain: xr.XrSwapchain,
+    image_index: u32,
     format: i64,
     extent: xr.XrExtent2Di,
     view_projection_matrix: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
-) bool {
-    return self.vtable.renderView(self.ptr, texture, format, extent, view_projection_matrix, cubes);
+) void {
+    self.vtable.renderView(
+        self.ptr,
+        swapchain,
+        image_index,
+        format,
+        extent,
+        view_projection_matrix,
+        cubes,
+    );
 }

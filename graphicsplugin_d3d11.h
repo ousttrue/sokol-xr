@@ -10,8 +10,7 @@ void *create();
 void destroy(void *p);
 int initializeDevice(void *p, void *instance, uint64_t systemId);
 const void *getGraphicsBinding(void *p);
-void allocateSwapchainImageStructs(void *p, void *pImage, size_t len);
-void renderView(void *p, uintptr_t texture, int64_t format, int width, int height, const float m[16], const void *pCube,
+void renderView(void *p, void *texture, int64_t format, int width, int height, const float m[16], const void *pCube,
                 size_t len);
 
 #ifdef __cplusplus

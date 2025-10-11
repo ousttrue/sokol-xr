@@ -40,11 +40,6 @@ pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
     return 1;
 }
 
-pub fn getSwapchainTextureValue(p: *const xr.XrSwapchainImageBaseHeader) usize {
-    const image: *const xr.XrSwapchainImageD3D11KHR = @ptrCast(p);
-    return @intFromPtr(image.texture);
-}
-
 pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
     const proj = xr_linear.Matrix4x4f.createProjectionFov(.D3D, fov, 0.05, 100.0);
     const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
@@ -57,7 +52,6 @@ const vtable = GraphicsPlugin.VTable{
     .getInstanceExtensions = &getInstanceExtensions,
     .selectColorSwapchainFormat = &selectColorSwapchainFormat,
     .getSupportedSwapchainSampleCount = &getSupportedSwapchainSampleCount,
-    .getSwapchainTextureValue = &getSwapchainTextureValue,
     .calcViewProjectionMatrix = &calcViewProjectionMatrix,
     //
     .deinit = &destroy,
@@ -68,13 +62,14 @@ const vtable = GraphicsPlugin.VTable{
 };
 
 allocator: std.mem.Allocator,
-
+swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageD3D11KHR),
 impl: *anyopaque,
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .allocator = allocator,
+        .swapchainBufferMap = .init(allocator),
         .impl = c.create().?,
     };
     return self;
@@ -89,6 +84,11 @@ pub fn init(allocator: std.mem.Allocator) !GraphicsPlugin {
 
 pub fn destroy(_self: *anyopaque) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
+    var it = self.swapchainBufferMap.iterator();
+    while(it.next())|entry|{
+        self.allocator.free(entry.value_ptr.*);
+    }
+    self.swapchainBufferMap.deinit();
     c.destroy(self.impl);
     self.allocator.destroy(self);
 }
@@ -109,26 +109,37 @@ pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
 
 pub fn allocateSwapchainImageStructs(
     _self: *anyopaque,
-    _: xr.XrSwapchainCreateInfo,
-    swapchainImageBase: []*xr.XrSwapchainImageBaseHeader,
-) bool {
+    swapchain: xr.XrSwapchain,
+    image_count: u32,
+) *xr.XrSwapchainImageBaseHeader {
     const self: *@This() = @ptrCast(@alignCast(_self));
-    c.allocateSwapchainImageStructs(self.impl, @ptrCast(&swapchainImageBase[0]), swapchainImageBase.len);
-    return true;
+    // Allocate and initialize the buffer of image structs
+    // (must be sequential in memory for xrEnumerateSwapchainImages).
+    // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
+    const images = self.allocator.alloc(xr.XrSwapchainImageD3D11KHR, image_count) catch @panic("OOM");
+    for (images) |*image| {
+        image.* = .{
+            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR,
+        };
+    }
+    self.swapchainBufferMap.put(swapchain, images) catch @panic("OOM");
+    return @ptrCast(&images[0]);
 }
 
 pub fn renderView(
     _self: *anyopaque,
-    image: usize,
+    swapchain: xr.XrSwapchain,
+    image_index: u32,
     format: i64,
     extent: xr.XrExtent2Di,
     vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
-) bool {
+) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
+    const textures = self.swapchainBufferMap.get(swapchain).?;
     c.renderView(
         self.impl,
-        image,
+        textures[image_index].texture,
         format,
         extent.width,
         extent.height,
@@ -136,5 +147,4 @@ pub fn renderView(
         &cubes[0],
         cubes.len,
     );
-    return true;
 }
