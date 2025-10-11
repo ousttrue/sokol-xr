@@ -21,15 +21,7 @@ pub const VTable = struct {
         swapchain: xr.XrSwapchain,
         image_count: u32,
     ) *xr.XrSwapchainImageBaseHeader,
-    renderView: *const fn (
-        ptr: *anyopaque,
-        swapchain: xr.XrSwapchain,
-        image_index: u32,
-        swapchain_format: i64,
-        extent: xr.XrExtent2Di,
-        view_projection_matrix: xr_linear.Matrix4x4f,
-        cubes: []geometry.Cube,
-    ) void,
+    getSwapchainImage: *const fn (ptr: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) usize,
 };
 
 ptr: *anyopaque,
@@ -79,22 +71,6 @@ pub fn allocateSwapchainImageStructs(
     return self.vtable.allocateSwapchainImageStructs(self.ptr, swapchain, image_count);
 }
 
-pub fn renderView(
-    self: @This(),
-    swapchain: xr.XrSwapchain,
-    image_index: u32,
-    format: i64,
-    extent: xr.XrExtent2Di,
-    view_projection_matrix: xr_linear.Matrix4x4f,
-    cubes: []geometry.Cube,
-) void {
-    self.vtable.renderView(
-        self.ptr,
-        swapchain,
-        image_index,
-        format,
-        extent,
-        view_projection_matrix,
-        cubes,
-    );
+pub fn getSwapchainImage(self: @This(), swapchain: xr.XrSwapchain, image_index: u32) usize {
+    return self.vtable.getSwapchainImage(self.ptr, swapchain, image_index);
 }

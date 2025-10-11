@@ -58,7 +58,7 @@ const vtable = GraphicsPlugin.VTable{
     .initializeDevice = &initializeDevice,
     .getGraphicsBinding = &getGraphicsBinding,
     .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
-    .renderView = &renderView,
+    .getSwapchainImage = &getSwapchainImage,
 };
 
 allocator: std.mem.Allocator,
@@ -85,7 +85,7 @@ pub fn init(allocator: std.mem.Allocator) !GraphicsPlugin {
 pub fn destroy(_self: *anyopaque) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     var it = self.swapchainBufferMap.iterator();
-    while(it.next())|entry|{
+    while (it.next()) |entry| {
         self.allocator.free(entry.value_ptr.*);
     }
     self.swapchainBufferMap.deinit();
@@ -126,25 +126,9 @@ pub fn allocateSwapchainImageStructs(
     return @ptrCast(&images[0]);
 }
 
-pub fn renderView(
-    _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
-    image_index: u32,
-    format: i64,
-    extent: xr.XrExtent2Di,
-    vp: xr_linear.Matrix4x4f,
-    cubes: []geometry.Cube,
-) void {
+pub fn getSwapchainImage(_self: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) usize {
     const self: *@This() = @ptrCast(@alignCast(_self));
     const textures = self.swapchainBufferMap.get(swapchain).?;
-    c.renderView(
-        self.impl,
-        textures[image_index].texture,
-        format,
-        extent.width,
-        extent.height,
-        &vp.m[0],
-        &cubes[0],
-        cubes.len,
-    );
+    const texture = textures[image_index];
+    return @intFromPtr(texture.texture);
 }

@@ -47,7 +47,7 @@ const vtable = GraphicsPlugin.VTable{
     .initializeDevice = &initializeDevice,
     .getGraphicsBinding = &getGraphicsBinding,
     .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
-    .renderView = &renderView,
+    .getSwapchainImage = &getSwapchainImage,
 };
 
 const SwapchainImageBufferNode = struct {
@@ -307,4 +307,12 @@ pub fn renderView(
 
     sg.endPass();
     sg.commit();
+}
+
+pub fn getSwapchainImage(_self: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) usize {
+    const self: *@This() = @ptrCast(@alignCast(_self));
+    _ = self;
+    _ = swapchain;
+    _ = image_index;
+    return 0;
 }

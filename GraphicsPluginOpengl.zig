@@ -8,7 +8,6 @@ const xr_result = @import("xr_result.zig");
 const geometry = @import("geometry.zig");
 const xr_linear = @import("xr_linear.zig");
 const xr_gl = @import("xr_gl.zig");
-const GraphicsRendererGlad = @import("GraphicsRendererGlad.zig");
 
 const INSTANCE_EXTENSIONS = [_][]const u8{"XR_KHR_opengl_enable"};
 
@@ -42,7 +41,7 @@ const vtable = GraphicsPlugin.VTable{
     .initializeDevice = &initializeDevice,
     .getGraphicsBinding = &getGraphicsBinding,
     .allocateSwapchainImageStructs = &allocateSwapchainImageStructs,
-    .renderView = &renderView,
+    .getSwapchainImage = &getSwapchainImage,
 };
 
 allocator: std.mem.Allocator,
@@ -50,8 +49,6 @@ window: c.ksGpuWindow = .{},
 graphicsBinding: xr_util.GetGraphicsBindingType(builtin.target) = .{},
 
 swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageOpenGLKHR),
-
-renderer: ?GraphicsRendererGlad = null,
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
@@ -71,9 +68,6 @@ pub fn init(allocator: std.mem.Allocator) !GraphicsPlugin {
 
 pub fn destroy(_self: *anyopaque) void {
     const self: *@This() = @ptrCast(@alignCast(_self));
-    if (self.renderer) |*r| {
-        r.deinit();
-    }
     std.log.debug("#### GraphicsPluginOpengl.deinit ####", .{});
     {
         var it = self.swapchainBufferMap.iterator();
@@ -103,8 +97,6 @@ pub fn initializeDevice(
     } else {
         xr_util.my_panic("initializeDevice: not impl");
     }
-
-    self.renderer = GraphicsRendererGlad.init(self.allocator);
 }
 
 pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
@@ -131,20 +123,27 @@ pub fn allocateSwapchainImageStructs(
     return @ptrCast(&images[0]);
 }
 
-pub fn renderView(
-    _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
-    image_index: u32,
-    format: i64,
-    extent: xr.XrExtent2Di,
-    vp: xr_linear.Matrix4x4f,
-    cubes: []geometry.Cube,
-) void {
+// pub fn renderView(
+//     _self: *anyopaque,
+//     swapchain: xr.XrSwapchain,
+//     image_index: u32,
+//     format: i64,
+//     extent: xr.XrExtent2Di,
+//     vp: xr_linear.Matrix4x4f,
+//     cubes: []geometry.Cube,
+// ) void {
+//     const self: *@This() = @ptrCast(@alignCast(_self));
+//     _ = format;
+//     const textures = self.swapchainBufferMap.get(swapchain).?;
+//     const texture = textures[image_index];
+//     if (self.renderer) |*r| {
+//         r.render(texture.image, extent.width, extent.height, vp, cubes);
+//     }
+// }
+
+pub fn getSwapchainImage(_self: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) usize {
     const self: *@This() = @ptrCast(@alignCast(_self));
-    _ = format;
     const textures = self.swapchainBufferMap.get(swapchain).?;
     const texture = textures[image_index];
-    if (self.renderer) |*r| {
-        r.render(texture.image, extent.width, extent.height, vp, cubes);
-    }
+    return @intCast(texture.image);
 }

@@ -13,6 +13,7 @@ const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const xr = @import("openxr");
 const Scene = @import("Scene.zig");
+const GraphicsRenderer = @import("GraphicsRendererGlad.zig");
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
@@ -128,6 +129,9 @@ pub fn main() !void {
         var scene = try Scene.init(allocator, program.session);
         defer scene.deinit();
 
+        var renderer = GraphicsRenderer.init(allocator);
+        defer renderer.deinit();
+
         var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(allocator);
         defer projectionLayerViews.deinit();
 
@@ -158,7 +162,6 @@ pub fn main() !void {
                             frame_state.predictedDisplayTime,
                         );
 
-                        // views = try program.renderFrame(cubes);
                         try projectionLayerViews.resize(2);
 
                         // Render view to the appropriate part of the swapchain image.
@@ -197,14 +200,13 @@ pub fn main() !void {
                             };
 
                             // render
-                            program.graphics.renderView(
-                                viewSwapchain.handle,
-                                swapchainImageIndex,
-                                program.colorSwapchainFormat,
-                                .{
-                                    .width = @intCast(viewSwapchain.width),
-                                    .height = @intCast(viewSwapchain.height),
-                                },
+                            renderer.render(
+                                @intCast(program.graphics.getSwapchainImage(
+                                    viewSwapchain.handle,
+                                    swapchainImageIndex,
+                                )),
+                                @intCast(viewSwapchain.width),
+                                @intCast(viewSwapchain.height),
                                 program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
                                 cubes,
                             );
