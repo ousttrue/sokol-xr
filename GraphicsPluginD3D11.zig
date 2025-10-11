@@ -126,9 +126,12 @@ pub fn allocateSwapchainImageStructs(
     return @ptrCast(&images[0]);
 }
 
-pub fn getSwapchainImage(_self: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) usize {
+pub fn getSwapchainImage(
+    _self: *anyopaque,
+    swapchain: xr.XrSwapchain,
+    image_index: u32,
+) GraphicsPlugin.SwapchainImage {
     const self: *@This() = @ptrCast(@alignCast(_self));
     const textures = self.swapchainBufferMap.get(swapchain).?;
-    const texture = textures[image_index];
-    return @intFromPtr(texture.texture);
+    return .{ .D3D11 = textures[image_index] };
 }

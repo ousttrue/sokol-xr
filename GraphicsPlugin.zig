@@ -3,6 +3,11 @@ const geometry = @import("geometry.zig");
 const xr_result = @import("xr_result.zig");
 const xr_linear = @import("xr_linear.zig");
 
+pub const SwapchainImage = union(enum) {
+    OpenGL: xr.XrSwapchainImageOpenGLKHR,
+    D3D11: xr.XrSwapchainImageD3D11KHR,
+};
+
 pub const VTable = struct {
     getInstanceExtensions: *const fn () []const []const u8,
     selectColorSwapchainFormat: *const fn (runtime_formats: []i64) ?i64,
@@ -21,7 +26,7 @@ pub const VTable = struct {
         swapchain: xr.XrSwapchain,
         image_count: u32,
     ) *xr.XrSwapchainImageBaseHeader,
-    getSwapchainImage: *const fn (ptr: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) usize,
+    getSwapchainImage: *const fn (ptr: *anyopaque, swapchain: xr.XrSwapchain, image_index: u32) SwapchainImage,
 };
 
 ptr: *anyopaque,
@@ -71,6 +76,6 @@ pub fn allocateSwapchainImageStructs(
     return self.vtable.allocateSwapchainImageStructs(self.ptr, swapchain, image_count);
 }
 
-pub fn getSwapchainImage(self: @This(), swapchain: xr.XrSwapchain, image_index: u32) usize {
+pub fn getSwapchainImage(self: @This(), swapchain: xr.XrSwapchain, image_index: u32) SwapchainImage {
     return self.vtable.getSwapchainImage(self.ptr, swapchain, image_index);
 }

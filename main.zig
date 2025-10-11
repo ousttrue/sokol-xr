@@ -7,13 +7,14 @@ const Options = @import("Options.zig");
 const PlatformPlugin = @import("PlatformPluginWin32.zig");
 const GraphicsPluginOpengl = @import("GraphicsPluginOpengl.zig");
 const GraphicsPluginD3D11 = @import("GraphicsPluginD3D11.zig");
-const GraphicsPluginSokol = @import("GraphicsPluginSokol.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const xr = @import("openxr");
 const Scene = @import("Scene.zig");
-const GraphicsRenderer = @import("GraphicsRendererGlad.zig");
+
+const GraphicsRendererGlad = @import("GraphicsRendererGlad.zig");
+const GraphicsRendererSokol = @import("GraphicsRendererSokol.zig");
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
@@ -92,7 +93,6 @@ pub fn main() !void {
         var graphicsPlugin = switch (options.GraphicsPlugin) {
             .D3D11 => try GraphicsPluginD3D11.init(allocator),
             .OpenGL => try GraphicsPluginOpengl.init(allocator),
-            .Sokol => try GraphicsPluginSokol.init(allocator),
             else => @panic("not impl"),
         };
         defer graphicsPlugin.deinit();
@@ -129,7 +129,7 @@ pub fn main() !void {
         var scene = try Scene.init(allocator, program.session);
         defer scene.deinit();
 
-        var renderer = GraphicsRenderer.init(allocator);
+        var renderer = GraphicsRendererSokol.init(allocator);
         defer renderer.deinit();
 
         var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(allocator);
@@ -200,16 +200,19 @@ pub fn main() !void {
                             };
 
                             // render
-                            renderer.render(
-                                @intCast(program.graphics.getSwapchainImage(
-                                    viewSwapchain.handle,
-                                    swapchainImageIndex,
-                                )),
-                                @intCast(viewSwapchain.width),
-                                @intCast(viewSwapchain.height),
-                                program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
-                                cubes,
-                            );
+                            switch (program.graphics.getSwapchainImage(
+                                viewSwapchain.handle,
+                                swapchainImageIndex,
+                            )) {
+                                .OpenGL => |image| renderer.render(
+                                    image.image,
+                                    @intCast(viewSwapchain.width),
+                                    @intCast(viewSwapchain.height),
+                                    program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
+                                    cubes,
+                                ),
+                                else => unreachable,
+                            }
 
                             // commit
                             const releaseInfo = xr.XrSwapchainImageReleaseInfo{
