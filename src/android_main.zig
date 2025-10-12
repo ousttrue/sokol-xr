@@ -1,7 +1,6 @@
 const std = @import("std");
 const c = @import("xr_util.zig").c;
 const Options = @import("Options.zig");
-const PlatformPlugin = @import("PlatformPluginAndroid.zig");
 const GraphicsPlugin = @import("GraphicsPluginOpenglES.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr = @import("openxr");
@@ -189,10 +188,18 @@ export fn android_main(app: *xr.android_app) void {
     }
     std.log.debug("xrInitializeLoaderKHR", .{});
 
-    var platform_plugin = PlatformPlugin.init(options, app);
+    const INSTANCE_EXTENSIONS = [_][]const u8{
+        xr.XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
+    };
+    var create_info: xr.XrInstanceCreateInfoAndroidKHR = .{
+        .type = xr.XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR,
+        .next = null,
+        .applicationVM = @ptrCast(app.activity.*.vm),
+        .applicationActivity = @ptrCast(app.activity.*.clazz),
+    };
     program.createInstance(
-        platform_plugin.getInstanceExtensions(),
-        platform_plugin.getInstanceCreateExtension(),
+        &INSTANCE_EXTENSIONS,
+        @ptrCast(&create_info),
     ) catch {
         xr_util.my_panic("program.createInstance", .{});
     };
@@ -210,8 +217,6 @@ export fn android_main(app: *xr.android_app) void {
     }
     std.log.debug("getPreferredBlendMode", .{});
 
-    platform_plugin.updateOptions(&options);
-
     program.initializeDevice() catch {
         xr_util.my_panic("initializeDevice", .{});
     };
@@ -226,6 +231,14 @@ export fn android_main(app: *xr.android_app) void {
         xr_util.my_panic("Scene.init", .{});
     };
     defer scene.deinit();
+
+    const referenceSpaceCreateInfo = Scene.getXrReferenceSpaceCreateInfo(options.AppSpace) catch {
+        xr_util.my_panic("Scene.getXrReferenceSpaceCreateInfo", .{});
+    };
+    var space: xr.XrSpace = null;
+    xr_result.check(xr.xrCreateReferenceSpace(program.session, &referenceSpaceCreateInfo, &space)) catch {
+        xr_util.my_panic("xrCreateReferenceSpace", .{});
+    };
 
     var renderer = RendererSokol.init(allocator) catch {
         xr_util.my_panic("Renderer.init", .{});
@@ -282,7 +295,7 @@ export fn android_main(app: *xr.android_app) void {
         projectionLayerViews.resize(0) catch @panic("OOM");
         if (frame_state.shouldRender == xr.XR_TRUE) {
             //
-            const view_state = program.locateView(frame_state.predictedDisplayTime) catch {
+            const view_state = program.locateView(space, frame_state.predictedDisplayTime) catch {
                 xr_util.my_panic("program.locateView", .{});
             };
             if ((view_state.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) != 0 and
@@ -293,7 +306,7 @@ export fn android_main(app: *xr.android_app) void {
                 // try xr_util.assert(viewCountOutput == self.configViews.items.len);
                 // try xr_util.assert(viewCountOutput == self.swapchains.items.len);
                 const cubes = scene.update(
-                    program.appSpace,
+                    space,
                     &program.input,
                     frame_state.predictedDisplayTime,
                 ) catch @panic("OOM");
@@ -363,7 +376,7 @@ export fn android_main(app: *xr.android_app) void {
                 }
             }
         }
-        program.endFrame(frame_state.predictedDisplayTime, projectionLayerViews.items) catch |e| {
+        program.endFrame(space, frame_state.predictedDisplayTime, projectionLayerViews.items) catch |e| {
             std.log.err("program.endFrame: {s}", .{@errorName(e)});
         };
     }

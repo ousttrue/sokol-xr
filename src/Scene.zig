@@ -28,7 +28,7 @@ pub fn init(allocator: std.mem.Allocator, session: xr.XrSession) !@This() {
     };
 
     for (visualizedSpaces) |visualizedSpace| {
-        const referenceSpaceCreateInfo = try xr_util.getXrReferenceSpaceCreateInfo(visualizedSpace);
+        const referenceSpaceCreateInfo = try getXrReferenceSpaceCreateInfo(visualizedSpace);
         var space: xr.XrSpace = undefined;
         const res = xr.xrCreateReferenceSpace(session, &referenceSpaceCreateInfo, &space);
         if (res == 0) {
@@ -121,4 +121,50 @@ pub fn update(self: *@This(), space: xr.XrSpace, input: *InputState, predictedDi
     }
 
     return self.cubes.items;
+}
+
+pub fn getXrReferenceSpaceCreateInfo(referenceSpaceTypeStr: []const u8) !xr.XrReferenceSpaceCreateInfo {
+    var referenceSpaceCreateInfo = xr.XrReferenceSpaceCreateInfo{
+        .type = xr.XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
+        .poseInReferenceSpace = geometry.XrPosef_Identity(),
+    };
+    if (std.mem.eql(u8, referenceSpaceTypeStr, "View")) {
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_VIEW;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "ViewFront")) {
+        // Render head-locked 2m in front of device.
+        referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_Translation(.{ .x = 0, .y = 0, .z = -2 });
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_VIEW;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "Local")) {
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_LOCAL;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "Stage")) {
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageLeft")) {
+        referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
+            0,
+            .{ .x = -2, .y = 0, .z = -2 },
+        );
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageRight")) {
+        referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
+            0,
+            .{ .x = 2, .y = 0, .z = -2 },
+        );
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageLeftRotated")) {
+        referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
+            3.14 / 3.0,
+            .{ .x = -2, .y = 0.5, .z = -2 },
+        );
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+    } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageRightRotated")) {
+        referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
+            -3.14 / 3.0,
+            .{ .x = 2, .y = 0.5, .z = -2 },
+        );
+        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+    } else {
+        std.log.err("unknown_reference_space_type: {s}", .{referenceSpaceTypeStr});
+        return error.unknown_reference_space_type;
+    }
+    return referenceSpaceCreateInfo;
 }

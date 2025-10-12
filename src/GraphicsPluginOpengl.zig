@@ -46,7 +46,7 @@ const vtable = GraphicsPlugin.VTable{
 
 allocator: std.mem.Allocator,
 window: c.ksGpuWindow = .{},
-graphicsBinding: xr_util.GetGraphicsBindingType(builtin.target) = .{},
+graphicsBinding: xr.XrGraphicsBindingOpenGLWin32KHR = .{},
 
 swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageOpenGLKHR),
 

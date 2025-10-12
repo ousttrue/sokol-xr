@@ -4,7 +4,6 @@
 
 const std = @import("std");
 const Options = @import("Options.zig");
-const PlatformPlugin = @import("PlatformPluginWin32.zig");
 const GraphicsPluginOpengl = @import("GraphicsPluginOpengl.zig");
 const GraphicsPluginD3D11 = @import("GraphicsPluginD3D11.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
@@ -86,9 +85,6 @@ pub fn main() !void {
     while (!key_polling.quitKeyPressed and requestRestart) {
         requestRestart = false;
 
-        // Create platform-specific implementation.
-        var platformPlugin = PlatformPlugin.init(options);
-
         // Create graphics API implementation.
         var graphicsPlugin = switch (options.GraphicsPlugin) {
             .D3D11 => try GraphicsPluginD3D11.init(allocator),
@@ -102,8 +98,8 @@ pub fn main() !void {
         defer program.deinit();
 
         try program.createInstance(
-            platformPlugin.getInstanceExtensions(),
-            platformPlugin.getInstanceCreateExtension(),
+            &.{},
+            null,
         );
 
         program.initializeSystem() catch |e| {
@@ -120,11 +116,13 @@ pub fn main() !void {
 
         try options.setEnvironmentBlendMode(try program.getPreferredBlendMode());
 
-        platformPlugin.updateOptions(&options);
-
         try program.initializeDevice();
         try program.initializeSession();
         try program.createSwapchains();
+
+        const referenceSpaceCreateInfo = try Scene.getXrReferenceSpaceCreateInfo(options.AppSpace);
+        var space: xr.XrSpace = null;
+        try xr_result.check(xr.xrCreateReferenceSpace(program.session, &referenceSpaceCreateInfo, &space));
 
         var scene = try Scene.init(allocator, program.session);
         defer scene.deinit();
@@ -148,7 +146,7 @@ pub fn main() !void {
                 try projectionLayerViews.resize(0);
                 if (frame_state.shouldRender == xr.XR_TRUE) {
                     //
-                    const view_state = try program.locateView(frame_state.predictedDisplayTime);
+                    const view_state = try program.locateView(space, frame_state.predictedDisplayTime);
                     if ((view_state.viewStateFlags & xr.XR_VIEW_STATE_POSITION_VALID_BIT) != 0 and
                         (view_state.viewStateFlags & xr.XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0)
                     {
@@ -157,7 +155,7 @@ pub fn main() !void {
                         // try xr_util.assert(viewCountOutput == self.configViews.items.len);
                         // try xr_util.assert(viewCountOutput == self.swapchains.items.len);
                         const cubes = try scene.update(
-                            program.appSpace,
+                            space,
                             &program.input,
                             frame_state.predictedDisplayTime,
                         );
@@ -222,7 +220,7 @@ pub fn main() !void {
                         }
                     }
                 }
-                try program.endFrame(frame_state.predictedDisplayTime, projectionLayerViews.items);
+                try program.endFrame(space, frame_state.predictedDisplayTime, projectionLayerViews.items);
             } else {
                 // Throttle loop since xrWaitFrame won't be called.
                 std.Thread.sleep(std.time.ns_per_ms * 250);

@@ -1,5 +1,31 @@
 const xr = @import("openxr");
 
+pub fn XrPosef_Identity() xr.XrPosef {
+    return .{
+        .orientation = .{ .x = 0, .y = 0, .z = 0, .w = 1 },
+        .position = .{ .x = 0, .y = 0, .z = 0 },
+    };
+}
+
+pub fn XrPosef_Translation(translation: xr.XrVector3f) xr.XrPosef {
+    return .{
+        .orientation = .{ .x = 0, .y = 0, .z = 0, .w = 1 },
+        .position = translation,
+    };
+}
+
+pub fn XrPosef_RotateCCWAboutYAxis(radians: f32, translation: xr.XrVector3f) xr.XrPosef {
+    return .{
+        .orientation = .{
+            .x = 0,
+            .y = @sin(radians * 0.5),
+            .z = 0,
+            .w = @cos(radians * 0.5),
+        },
+        .position = translation,
+    };
+}
+
 pub const Vertex = struct {
     Position: xr.XrVector3f,
     Color: xr.XrVector3f,

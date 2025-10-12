@@ -20,7 +20,6 @@ graphics: GraphicsPlugin,
 instance: xr.XrInstance = null,
 systemId: xr.XrSystemId = xr.XR_NULL_SYSTEM_ID,
 session: xr.XrSession = null,
-appSpace: xr.XrSpace = null,
 
 configViews: std.array_list.Managed(xr.XrViewConfigurationView),
 views: std.array_list.Managed(xr.XrView),
@@ -68,6 +67,10 @@ pub fn createInstance(
     instance_create_extension: ?*anyopaque,
 ) !void {
     try self.logLayersAndExtensions();
+
+    for (platform_extensions) |name| {
+        std.log.info("platform extension: {s}", .{name});
+    }
     try self.createInstanceInternal(platform_extensions, instance_create_extension);
     try self.logInstanceInfo();
 }
@@ -140,6 +143,7 @@ fn createInstanceInternal(
     instance_create_extension: ?*anyopaque,
 ) !void {
     try xr_util.assert(self.instance == null);
+
     //
     var arena = std.heap.ArenaAllocator.init(self.allocator);
     defer arena.deinit();
@@ -386,10 +390,6 @@ pub fn initializeSession(self: *@This()) !void {
     try self.logReferenceSpaces();
     // try self.initializeActions();
 
-    {
-        const referenceSpaceCreateInfo = try xr_util.getXrReferenceSpaceCreateInfo(self.options.AppSpace);
-        try xr_result.check(xr.xrCreateReferenceSpace(self.session, &referenceSpaceCreateInfo, &self.appSpace));
-    }
 }
 
 fn logReferenceSpaces(self: @This()) !void {
@@ -693,12 +693,12 @@ pub fn beginFrame(self: *@This()) !xr.XrFrameState {
     return frameState;
 }
 
-pub fn locateView(self: *@This(), predictedDisplayTime: i64) !xr.XrViewState {
+pub fn locateView(self: *@This(), space: xr.XrSpace, predictedDisplayTime: i64) !xr.XrViewState {
     var viewLocateInfo = xr.XrViewLocateInfo{
         .type = xr.XR_TYPE_VIEW_LOCATE_INFO,
         .viewConfigurationType = self.options.Parsed.ViewConfigType,
         .displayTime = predictedDisplayTime,
-        .space = self.appSpace,
+        .space = space,
     };
     var viewState = xr.XrViewState{
         .type = xr.XR_TYPE_VIEW_STATE,
@@ -717,6 +717,7 @@ pub fn locateView(self: *@This(), predictedDisplayTime: i64) !xr.XrViewState {
 
 pub fn endFrame(
     self: @This(),
+    space: xr.XrSpace,
     predictedDisplayTime: i64,
     views: []xr.XrCompositionLayerProjectionView,
 ) !void {
@@ -733,7 +734,7 @@ pub fn endFrame(
     if (views.len > 0) {
         composition_layer_projection = .{
             .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-            .space = self.appSpace,
+            .space = space,
             .layerFlags = if (self.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
                 xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
             else
