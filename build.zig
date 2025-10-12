@@ -1,10 +1,11 @@
 const std = @import("std");
 const zcc = @import("compile_commands");
+
 const zbk = @import("zbk");
-const sokol = @import("sokol");
 // const zbk = @import("zbk_dev");
 const ndk = zbk.android.ndk;
-const xr_util = @import("xr_util.zig");
+
+const sokol = @import("sokol");
 
 const BUILD_NAME = "hello_xr";
 const PKG_NAME = "com.zig." ++ BUILD_NAME;
@@ -15,13 +16,15 @@ pub fn build(b: *std.Build) !void {
     var targets = std.ArrayListUnmanaged(*std.Build.Step.Compile){};
 
     const target = b.standardTargetOptions(.{});
-    std.debug.print("[build target] {s} ...\n", .{target.result.linuxTriple(b.allocator) catch
-        xr_util.my_panic("OOM", .{})});
+    std.debug.print("[build target] {s} ...\n", .{target.result.linuxTriple(b.allocator) catch @panic("OOM")});
+
     // x64_86-windows-gnu
     // aarch64-linux-android
     const optimize = b.standardOptimizeOption(.{});
 
-    const android_home = try zbk.getEnvPath(b.allocator, "ANDROID_HOME");
+    const android_home = zbk.getEnvPath(b.allocator, "ANDROID_HOME") orelse {
+        return error.no_android_home;
+    };
     const ndk_path = try ndk.getPath(b, .{ .android_home = android_home });
 
     const compiled = if (target.result.abi.isAndroid())
@@ -45,7 +48,7 @@ pub fn build(b: *std.Build) !void {
             }),
         });
 
-    targets.append(b.allocator, compiled) catch xr_util.my_panic("OOM", .{});
+    targets.append(b.allocator, compiled) catch @panic("OOM");
     b.installArtifact(compiled);
     compiled.addIncludePath(b.path(""));
 
@@ -213,7 +216,9 @@ pub fn build(b: *std.Build) !void {
         compiled.addIncludePath(.{ .cwd_relative = b.fmt("{s}/sources/android/native_app_glue", .{ndk_path}) });
 
         // android sdk
-        const java_home = try zbk.getEnvPath(b.allocator, "JAVA_HOME");
+        const java_home = zbk.getEnvPath(b.allocator, "JAVA_HOME") orelse {
+            return error.no_java_home;
+        };
         const apk_builder = try zbk.android.ApkBuilder.init(b, .{
             .android_home = android_home,
             .java_home = java_home,
@@ -251,6 +256,6 @@ pub fn build(b: *std.Build) !void {
     }
 
     // compile_commands.json
-    const step = zcc.createStep(b, "cdb", targets.toOwnedSlice(b.allocator) catch xr_util.my_panic("OOM", .{}));
+    const step = zcc.createStep(b, "cdb", targets.toOwnedSlice(b.allocator) catch @panic("OOM"));
     step.dependOn(&compiled.step);
 }
