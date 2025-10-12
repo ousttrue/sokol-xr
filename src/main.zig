@@ -98,7 +98,7 @@ pub fn main() !void {
         defer program.deinit();
 
         try program.createInstance(
-            &.{},
+            &xr_util.REQUIRED_EXTENSIONS,
             null,
         );
 

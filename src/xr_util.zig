@@ -15,6 +15,16 @@ else
         @cInclude("common/gfxwrapper_opengl.h");
     });
 
+pub const REQUIRED_EXTENSIONS = [_][]const u8{
+    xr.XR_FB_PASSTHROUGH_EXTENSION_NAME,
+    xr.XR_FB_TRIANGLE_MESH_EXTENSION_NAME,
+};
+
+pub const REQUIRED_EXTENSIONS_ANDROID = [_][]const u8{
+    xr.XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME,
+    xr.XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME,
+};
+
 pub fn my_panic(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
     @panic("OOM");

@@ -198,7 +198,7 @@ export fn android_main(app: *xr.android_app) void {
         .applicationActivity = @ptrCast(app.activity.*.clazz),
     };
     program.createInstance(
-        &INSTANCE_EXTENSIONS,
+        &(INSTANCE_EXTENSIONS ++ xr_util.REQUIRED_EXTENSIONS),
         @ptrCast(&create_info),
     ) catch {
         xr_util.my_panic("program.createInstance", .{});

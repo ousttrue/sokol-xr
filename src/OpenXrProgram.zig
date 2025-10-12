@@ -67,10 +67,6 @@ pub fn createInstance(
     instance_create_extension: ?*anyopaque,
 ) !void {
     try self.logLayersAndExtensions();
-
-    for (platform_extensions) |name| {
-        std.log.info("platform extension: {s}", .{name});
-    }
     try self.createInstanceInternal(platform_extensions, instance_create_extension);
     try self.logInstanceInfo();
 }
@@ -165,6 +161,9 @@ fn createInstanceInternal(
         try extensions.append(copyz);
     }
 
+    for (extensions.items) |name| {
+        std.log.info("extension: {s}", .{name});
+    }
     var createInfo = xr.XrInstanceCreateInfo{
         .type = xr.XR_TYPE_INSTANCE_CREATE_INFO,
         .next = instance_create_extension,
@@ -389,7 +388,6 @@ pub fn initializeSession(self: *@This()) !void {
 
     try self.logReferenceSpaces();
     // try self.initializeActions();
-
 }
 
 fn logReferenceSpaces(self: @This()) !void {
@@ -404,6 +402,12 @@ fn logReferenceSpaces(self: @This()) !void {
     std.log.info("Available reference spaces: {}", .{spaceCount});
     for (spaces) |space| {
         std.log.debug("  Name: {}", .{space});
+    }
+
+    if (try systemSupportsPassthrough(self.instance, self.systemId)) {
+        std.log.info("Passthrough supported", .{});
+    } else {
+        std.log.warn("Passthrough not supported", .{});
     }
 }
 
@@ -748,4 +752,18 @@ pub fn endFrame(
     }
 
     try xr_result.check(xr.xrEndFrame(self.session, &frameEndInfo));
+}
+
+// https://developers.meta.com/horizon/documentation/native/android/mobile-passthrough
+// TODO: XR_PASSTHROUGH_CAPABILITY_COLOR_BIT_FB
+fn systemSupportsPassthrough(instance: xr.XrInstance, systemId: xr.XrSystemId) !bool {
+    var passthroughSystemProperties = xr.XrSystemPassthroughProperties2FB{
+        .type = xr.XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES2_FB,
+    };
+    var systemProperties = xr.XrSystemProperties{
+        .type = xr.XR_TYPE_SYSTEM_PROPERTIES,
+        .next = &passthroughSystemProperties,
+    };
+    try xr_result.check(xr.xrGetSystemProperties(instance, systemId, &systemProperties));
+    return (passthroughSystemProperties.capabilities & xr.XR_PASSTHROUGH_CAPABILITY_BIT_FB) == xr.XR_PASSTHROUGH_CAPABILITY_BIT_FB;
 }

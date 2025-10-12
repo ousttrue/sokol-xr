@@ -33,6 +33,10 @@
       android:required="false"
       />
 
+  <uses-feature 
+    android:name="com.oculus.feature.PASSTHROUGH" 
+    android:required="true" />
+
   <queries>
     <!-- to talk to the broker -->
     <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
