@@ -4,6 +4,10 @@ Windows11
 
 ```sh
 > zig build
+
+or
+
+> zig build -Dtarget=x64_86-windows-gnu
 ```
 
 or Android(Quest3)

@@ -9,7 +9,7 @@
 #include "graphicsplugin.h"
 #include "options.h"
 
-#include <common/xr_linear.h>
+#include "common/xr_linear.h"
 #include <DirectXColors.h>
 #include <D3Dcompiler.h>
 

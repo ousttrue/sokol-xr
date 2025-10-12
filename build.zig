@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) !void {
 
     // xr_result
     const xr_result = b.addModule("xr_result", .{
-        .root_source_file = b.path("xr_result.zig"),
+        .root_source_file = b.path("src/xr_result.zig"),
     });
     compiled.root_module.addImport("xr_result", xr_result);
 
@@ -49,12 +49,12 @@ fn build_exe(
         .root_module = b.addModule(BUILD_NAME, .{
             .target = target,
             .optimize = optimize,
-            .root_source_file = b.path("main.zig"),
+            .root_source_file = b.path("src/main.zig"),
             .link_libc = true,
         }),
     });
     b.installArtifact(exe);
-    exe.addIncludePath(b.path(""));
+    exe.addIncludePath(b.path("src"));
 
     // openxr_loader
     const openxr_dep = b.dependency("openxr", .{});
@@ -78,7 +78,7 @@ fn build_exe(
     const t = b.addTranslateC(.{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("xr_win32.h"),
+        .root_source_file = b.path("src/xr_win32.h"),
     });
     t.addIncludePath(openxr_dep.path("include"));
     const openxr_mod = t.createModule();
@@ -86,8 +86,9 @@ fn build_exe(
     exe.addIncludePath(openxr_dep.path("include"));
 
     // glad
-    exe.addIncludePath(b.path("external/glad2/include"));
+    exe.addIncludePath(b.path("src/external/glad2/include"));
     exe.addCSourceFiles(.{
+        .root = b.path("src"),
         .files = &.{
             "external/glad2/src/gl.c",
             "external/glad2/src/wgl.c",
@@ -132,7 +133,7 @@ fn build_exe(
     const shdc_dep = sokol_dep.builder.dependency("shdc", .{});
     const shd_mod = try sokol.shdc.createModule(b, "shader", sokol_mod, .{
         .shdc_dep = shdc_dep,
-        .input = "cube.glsl",
+        .input = "src/cube.glsl",
         .output = "shader.zig",
         .slang = .{
             .glsl430 = true,
@@ -158,7 +159,7 @@ fn build_android_so(
         .root_module = b.addModule(BUILD_NAME, .{
             .target = target,
             .optimize = optimize,
-            .root_source_file = b.path("android_main.zig"),
+            .root_source_file = b.path("src/android_main.zig"),
         }),
         .linkage = .dynamic,
     });
@@ -180,7 +181,7 @@ fn build_android_so(
     const t = b.addTranslateC(.{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("xr_android.h"),
+        .root_source_file = b.path("src/xr_android.h"),
     });
     t.addIncludePath(openxr_dep.path("include"));
     const openxr_mod = t.createModule();
@@ -201,7 +202,7 @@ fn build_android_so(
     // call shdc.createModule() helper function, this returns a `!*Build.Module`:
     const shd_mod = try sokol.shdc.createModule(b, "shader", sokol_mod, .{
         .shdc_dep = shdc_dep,
-        .input = "cube.glsl",
+        .input = "src/cube.glsl",
         .output = "shader.zig",
         .slang = .{
             .glsl310es = true,
@@ -242,7 +243,7 @@ fn build_android_so(
         "{s}/sources/android/native_app_glue/android_native_app_glue.c",
         .{ndk_path},
     ) } });
-    lib.addCSourceFile(.{ .file = b.path("cpp_helper.cpp") });
+    lib.addCSourceFile(.{ .file = b.path("src/cpp_helper.cpp") });
     lib.addIncludePath(.{ .cwd_relative = b.fmt("{s}/sources/android/native_app_glue", .{ndk_path}) });
 
     // android sdk
@@ -260,10 +261,10 @@ fn build_android_so(
 
     // make apk from
     const apk = apk_builder.makeApk(b, .{
-        .android_manifest = b.path("AndroidManifest.xml"),
+        .android_manifest = b.path("android/AndroidManifest.xml"),
         .keystore_password = keystore_password,
         .keystore_file = keystore.output,
-        .resource_dir = b.path("android_resources"),
+        .resource_dir = b.path("android/res"),
         .copy_list = &.{
             .{
                 .src = lib.getEmittedBin(),
