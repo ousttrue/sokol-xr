@@ -9,7 +9,8 @@ const GraphicsPluginD3D11 = @import("GraphicsPluginD3D11.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
-const xr = @import("openxr");
+const xr_gen = @import("openxr");
+const xr = xr_gen.c;
 const Scene = @import("Scene.zig");
 
 const GraphicsRendererGlad = @import("GraphicsRendererGlad.zig");

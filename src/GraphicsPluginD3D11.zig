@@ -3,7 +3,7 @@ const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const xr_linear = @import("xr_linear.zig");
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 const geometry = @import("geometry.zig");
 const c = @cImport({
     @cInclude("graphicsplugin_d3d11.h");

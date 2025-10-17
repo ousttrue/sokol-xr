@@ -1,4 +1,4 @@
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 
 pub fn XrPosef_Identity() xr.XrPosef {
     return .{

@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 const geometry = @import("geometry.zig");
 const xr_result = @import("xr_result.zig");
 const xr_linear = @import("xr_linear.zig");

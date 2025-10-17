@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 pub const c = if (builtin.target.abi.isAndroid())
     @cImport({
         @cInclude("android/sensor.h");

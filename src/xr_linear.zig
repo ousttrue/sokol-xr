@@ -1,4 +1,4 @@
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 
 pub const GraphicsAPI = enum {
     VULKAN,

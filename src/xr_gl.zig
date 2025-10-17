@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 const xr_result = @import("xr_result.zig");
 const xr_util = @import("xr_util.zig");
 const c = xr_util.c;

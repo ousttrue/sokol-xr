@@ -1,4 +1,4 @@
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 const xr_result = @import("xr_result.zig");
 
 actionSet: xr.XrActionSet = null,

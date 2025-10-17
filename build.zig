@@ -1,8 +1,11 @@
 const std = @import("std");
 const zcc = @import("compile_commands");
 
+// const zbk = @import("zbk_dev");
+// const ZBK_DEP = "zbk_dev";
 const zbk = @import("zbk");
-// const zbk = @import("zbk_dev"); // from "../zbk"
+const ZBK_DEP = "zbk";
+
 const ndk = zbk.android.ndk;
 
 const sokol = @import("sokol");
@@ -58,11 +61,24 @@ fn build_exe(
 
     // openxr_loader
     const openxr_dep = b.dependency("openxr", .{});
-    const vcenv = try zbk.windows.VcEnv.init(b.allocator);
-    const openxr_loader = try zbk.cpp.cmake.build(b, .{
+    exe.addIncludePath(openxr_dep.path("include"));
+
+    const zbk_dep = b.dependency(ZBK_DEP, .{
+        // .version = "1_1_52",
+        .openxr = openxr_dep.path(""),
+        .target = target,
+        .optimize = optimize,
+    });
+    const vcenv_wf = zbk_dep.namedWriteFiles("vcenv");
+    const vcenv = vcenv_wf.getDirectory().path(b, "vcenv");
+    const openxr_mod = zbk_dep.module("openxr");
+    exe.root_module.addImport("openxr", openxr_mod);
+
+    // const vcenv = try zbk.windows.VcEnv.init(b.allocator);
+    const openxr_loader = zbk.cpp.cmake.build(b, .{
         .source = openxr_dep.path(""),
         .build_dir_name = "build-win32",
-        .envmap = vcenv.envmap,
+        .vcenv = vcenv,
         .args = &.{"-DDYNAMIC_LOADER=ON"},
     });
     exe.addLibraryPath(openxr_loader.prefix.getDirectory().path(b, "lib"));
@@ -73,17 +89,6 @@ fn build_exe(
         "openxr_loader.dll",
     );
     b.getInstallStep().dependOn(&dll.step);
-
-    // translate-c
-    const t = b.addTranslateC(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("src/xr_win32.h"),
-    });
-    t.addIncludePath(openxr_dep.path("include"));
-    const openxr_mod = t.createModule();
-    exe.root_module.addImport("openxr", openxr_mod);
-    exe.addIncludePath(openxr_dep.path("include"));
 
     // glad
     exe.addIncludePath(b.path("src/external/glad2/include"));
@@ -168,7 +173,7 @@ fn build_android_so(
 
     // openxr_loader
     const openxr_dep = b.dependency("openxr", .{});
-    const openxr_loader = try zbk.cpp.cmake.build(b, .{
+    const openxr_loader = zbk.cpp.cmake.build(b, .{
         .source = openxr_dep.path(""),
         .build_dir_name = "build-android",
         .ndk_path = ndk_path,

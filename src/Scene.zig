@@ -1,5 +1,5 @@
 const std = @import("std");
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 const xr_util = @import("xr_util.zig");
 const geometry = @import("geometry.zig");
 const InputState = @import("InputState.zig");
