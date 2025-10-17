@@ -12,6 +12,7 @@ const xr_result = @import("xr_result.zig");
 const xr_gen = @import("openxr");
 const xr = xr_gen.c;
 const Scene = @import("Scene.zig");
+const PassThrough = @import("PassThrough.zig");
 
 const GraphicsRendererGlad = @import("GraphicsRendererGlad.zig");
 const GraphicsRendererSokol = @import("GraphicsRendererSokol.zig");
@@ -128,7 +129,16 @@ pub fn main() !void {
         var scene = try Scene.init(allocator, program.instance, program.session);
         defer scene.deinit();
 
-        var renderer = try GraphicsRendererSokol.init(allocator);
+        if (try PassThrough.systemSupportsPassthrough(program.instance, program.systemId)) {
+            std.log.info("Passthrough supported", .{});
+        } else {
+            std.log.warn("Passthrough not supported", .{});
+        }
+        var passthrough = try PassThrough.init(program.instance, program.session);
+        defer passthrough.deinit();
+
+        // var renderer = try GraphicsRendererSokol.init(allocator);
+        var renderer = GraphicsRendererGlad.init(allocator);
         defer renderer.deinit();
 
         var projectionLayerViews = std.array_list.Managed(xr.XrCompositionLayerProjectionView).init(allocator);
@@ -207,6 +217,7 @@ pub fn main() !void {
                                     image.image,
                                     @intCast(viewSwapchain.width),
                                     @intCast(viewSwapchain.height),
+                                    .{0, 0, 0, 0},
                                     program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
                                     cubes,
                                 ),
@@ -221,7 +232,12 @@ pub fn main() !void {
                         }
                     }
                 }
-                try program.endFrame(space, frame_state.predictedDisplayTime, projectionLayerViews.items);
+                try program.endFrame(
+                    space,
+                    frame_state.predictedDisplayTime,
+                    projectionLayerViews.items,
+                    passthrough.passthrough_layer,
+                );
             } else {
                 // Throttle loop since xrWaitFrame won't be called.
                 std.Thread.sleep(std.time.ns_per_ms * 250);

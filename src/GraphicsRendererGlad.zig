@@ -1,5 +1,6 @@
 const std = @import("std");
-const xr = @import("openxr");
+const xr_gen = @import("openxr");
+const xr = xr_gen.c;
 const xr_util = @import("xr_util.zig");
 const c = xr_util.c;
 const geometry = @import("geometry.zig");
@@ -42,7 +43,6 @@ cubeVertexBuffer: c.GLuint = 0,
 cubeIndexBuffer: c.GLuint = 0,
 
 colorToDepthMap: std.AutoHashMap(u32, u32),
-clearColor: [4]f32 = .{ 0, 0, 0, 0 },
 
 pub fn init(allocator: std.mem.Allocator) @This() {
     var self = @This(){
@@ -173,6 +173,7 @@ pub fn render(
     color_texture: u32,
     viewport_width: i32,
     viewport_height: i32,
+    clear_color: [4]f32,
     vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
 ) void {
@@ -198,7 +199,7 @@ pub fn render(
     c.glFramebufferTexture2D(c.GL_FRAMEBUFFER, c.GL_DEPTH_ATTACHMENT, c.GL_TEXTURE_2D, depth_texture, 0);
 
     // Clear swapchain and depth buffer.
-    c.glClearColor(self.clearColor[0], self.clearColor[1], self.clearColor[2], self.clearColor[3]);
+    c.glClearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
     c.glClearDepth(1.0);
     c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT | c.GL_STENCIL_BUFFER_BIT);
 

@@ -36,11 +36,6 @@ sessionRunning: bool = false,
 eventDataBuffer: xr.XrEventDataBuffer = .{},
 input: InputState = .{},
 
-// extensions
-ext_passthrough: xr_gen.extensions.XR_FB_passthrough = .{},
-passthroughFeature: xr.XrPassthroughFB = null,
-passthroughLayer: xr.XrPassthroughLayerFB = null,
-
 const ACCEPTABLE_BLENDMODES = [_]xr.XrEnvironmentBlendMode{
     xr.XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
     xr.XR_ENVIRONMENT_BLEND_MODE_ADDITIVE,
@@ -226,14 +221,6 @@ pub fn initializeSystem(this: *@This()) !void {
     });
     try xr_util.assert(this.instance != null);
     try xr_util.assert(this.systemId != xr.XR_NULL_SYSTEM_ID);
-
-    if (try systemSupportsPassthrough(this.instance, this.systemId)) {
-        std.log.info("Passthrough supported", .{});
-    } else {
-        std.log.warn("Passthrough not supported", .{});
-    }
-
-    get_proc.getProcs(@ptrCast(this.instance), &this.ext_passthrough);
 }
 
 pub fn getPreferredBlendMode(this: @This()) !xr.XrEnvironmentBlendMode {
@@ -405,31 +392,6 @@ pub fn initializeSession(this: *@This()) !void {
     try this.logReferenceSpaces();
     // try this.initializeActions();
 
-    //
-    // XR_FB_passthrough
-    // https://developers.meta.com/horizon/documentation/native/android/mobile-passthrough/?locale=ja_JP
-    //
-    var passthroughCreateInfo = xr.XrPassthroughCreateInfoFB{
-        .type = xr.XR_TYPE_PASSTHROUGH_CREATE_INFO_FB,
-        .flags = xr.XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB,
-    };
-    try xr_result.check(this.ext_passthrough.xrCreatePassthroughFB.?(
-        this.session,
-        &passthroughCreateInfo,
-        &this.passthroughFeature,
-    ));
-
-    var layerCreateInfo = xr.XrPassthroughLayerCreateInfoFB{
-        .type = xr.XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB,
-        .passthrough = this.passthroughFeature,
-        .purpose = xr.XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB,
-        .flags = xr.XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB,
-    };
-    try xr_result.check(this.ext_passthrough.xrCreatePassthroughLayerFB.?(
-        this.session,
-        &layerCreateInfo,
-        &this.passthroughLayer,
-    ));
 }
 
 fn logReferenceSpaces(this: @This()) !void {
@@ -760,32 +722,42 @@ pub fn endFrame(
     space: xr.XrSpace,
     predictedDisplayTime: i64,
     views: []xr.XrCompositionLayerProjectionView,
+    maybe_passthrough: ?xr.XrPassthroughLayerFB,
 ) !void {
     var frameEndInfo = xr.XrFrameEndInfo{
         .type = xr.XR_TYPE_FRAME_END_INFO,
         .displayTime = predictedDisplayTime,
-        .environmentBlendMode = this.options.Parsed.EnvironmentBlendMode,
+        // .environmentBlendMode = this.options.Parsed.EnvironmentBlendMode,
+        .environmentBlendMode = xr.XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
         .layerCount = 0,
         .layers = null,
     };
 
     var composition_layers: [2]*xr.XrCompositionLayerBaseHeader = undefined;
-    var composition_layer_projection: xr.XrCompositionLayerProjection = undefined;
-    // var composition_layer_passthrough = xr.XrCompositionLayerPassthroughFB{
-    //     .type = xr.XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
-    //     .layerHandle = this.passthroughLayer,
-    //     .flags = xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
-    //     .space = null,
-    // };
 
+    var composition_layer_passthrough: xr.XrCompositionLayerPassthroughFB = undefined;
+    if (maybe_passthrough) |passthrough| {
+        composition_layer_passthrough = .{
+            .type = xr.XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
+            .layerHandle = passthrough,
+            .flags = xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+            .space = null,
+        };
+        composition_layers[frameEndInfo.layerCount] = @ptrCast(&composition_layer_passthrough);
+        frameEndInfo.layerCount += 1;
+        frameEndInfo.layers = &composition_layers[0];
+    }
+
+    var composition_layer_projection: xr.XrCompositionLayerProjection = undefined;
     if (views.len > 0) {
         composition_layer_projection = .{
             .type = xr.XR_TYPE_COMPOSITION_LAYER_PROJECTION,
             .space = space,
-            .layerFlags = if (this.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
-                xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
-            else
-                0,
+            .layerFlags = //if (this.options.Parsed.EnvironmentBlendMode == xr.XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND)
+            xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | xr.XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT
+            // else
+            //     0,
+            ,
             .viewCount = @intCast(views.len),
             .views = &views[0],
         };
@@ -794,25 +766,5 @@ pub fn endFrame(
         frameEndInfo.layers = &composition_layers[0];
     }
 
-    // {
-    //     composition_layers[frameEndInfo.layerCount] = @ptrCast(&composition_layer_passthrough);
-    //     frameEndInfo.layerCount += 1;
-    //     frameEndInfo.layers = &composition_layers[0];
-    // }
-
     try xr_result.check(xr.xrEndFrame(this.session, &frameEndInfo));
-}
-
-// https://developers.meta.com/horizon/documentation/native/android/mobile-passthrough
-// TODO: XR_PASSTHROUGH_CAPABILITY_COLOR_BIT_FB
-fn systemSupportsPassthrough(instance: xr.XrInstance, systemId: xr.XrSystemId) !bool {
-    var passthroughSystemProperties = xr.XrSystemPassthroughProperties2FB{
-        .type = xr.XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES2_FB,
-    };
-    var systemProperties = xr.XrSystemProperties{
-        .type = xr.XR_TYPE_SYSTEM_PROPERTIES,
-        .next = &passthroughSystemProperties,
-    };
-    try xr_result.check(xr.xrGetSystemProperties(instance, systemId, &systemProperties));
-    return (passthroughSystemProperties.capabilities & xr.XR_PASSTHROUGH_CAPABILITY_BIT_FB) == xr.XR_PASSTHROUGH_CAPABILITY_BIT_FB;
 }

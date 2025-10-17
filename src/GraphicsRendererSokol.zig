@@ -145,6 +145,7 @@ pub fn render(
     color_texture: u32,
     viewport_width: i32,
     viewport_height: i32,
+    clear_color: [4]f32,
     vp: xr_linear.Matrix4x4f,
     cubes: []geometry.Cube,
 ) void {
@@ -153,7 +154,12 @@ pub fn render(
             .colors = .{
                 .{
                     .load_action = .CLEAR,
-                    .clear_value = .{ .r = 0.25, .g = 0.5, .b = 0.75, .a = 1 },
+                    .clear_value = .{
+                        .r = clear_color[0],
+                        .g = clear_color[1],
+                        .b = clear_color[2],
+                        .a = clear_color[3],
+                    },
                 },
                 .{},
                 .{},
