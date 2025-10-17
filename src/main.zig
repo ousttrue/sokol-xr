@@ -125,7 +125,7 @@ pub fn main() !void {
         var space: xr.XrSpace = null;
         try xr_result.check(xr.xrCreateReferenceSpace(program.session, &referenceSpaceCreateInfo, &space));
 
-        var scene = try Scene.init(allocator, program.session);
+        var scene = try Scene.init(allocator, program.instance, program.session);
         defer scene.deinit();
 
         var renderer = try GraphicsRendererSokol.init(allocator);

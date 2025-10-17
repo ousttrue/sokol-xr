@@ -11,7 +11,8 @@
             "program": "${workspaceFolder}/zig-out/bin/hello_xr.exe",
             "args": [
                 "-g",
-                "Sokol",
+                // "Sokol",
+                "OpenGL",
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

@@ -1,21 +1,37 @@
 const std = @import("std");
-const xr = @import("openxr").c;
+const xr_gen = @import("openxr");
+const xr = xr_gen.c;
 const xr_util = @import("xr_util.zig");
 const geometry = @import("geometry.zig");
 const InputState = @import("InputState.zig");
+const get_proc = @import("get_proc.zig");
+const HandTracking = @import("HandTracking.zig");
 
 allocator: std.mem.Allocator,
 cubes: std.array_list.Managed(geometry.Cube),
 visualizedSpaces: std.array_list.Managed(xr.XrSpace),
 
-pub fn init(allocator: std.mem.Allocator, session: xr.XrSession) !@This() {
-    // fn createVisualizedSpaces(self: *@This()) !void {
-    // try xr_util.assert(self.session != null);
-    var self = @This(){
+ext_handTracking: xr_gen.extensions.XR_EXT_hand_tracking = .{},
+handLeft: HandTracking = .{},
+handRight: HandTracking = .{},
+
+pub fn init(
+    allocator: std.mem.Allocator,
+    instance: xr.XrInstance,
+    session: xr.XrSession,
+) !@This() {
+
+    // fn createVisualizedSpaces(this: *@This()) !void {
+    // try xr_util.assert(this.session != null);
+    var this = @This(){
         .allocator = allocator,
         .cubes = .init(allocator),
         .visualizedSpaces = .init(allocator),
     };
+
+    get_proc.getProcs(@ptrCast(instance), &this.ext_handTracking);
+    try this.handLeft.init(this.ext_handTracking, session, .left);
+    try this.handRight.init(this.ext_handTracking, session, .right);
 
     const visualizedSpaces = [_][]const u8{
         "ViewFront",
@@ -32,7 +48,7 @@ pub fn init(allocator: std.mem.Allocator, session: xr.XrSession) !@This() {
         var space: xr.XrSpace = undefined;
         const res = xr.xrCreateReferenceSpace(session, &referenceSpaceCreateInfo, &space);
         if (res == 0) {
-            try self.visualizedSpaces.append(space);
+            try this.visualizedSpaces.append(space);
         } else {
             std.log.warn("Failed to create reference space {s} with error {}", .{
                 visualizedSpace,
@@ -41,19 +57,51 @@ pub fn init(allocator: std.mem.Allocator, session: xr.XrSession) !@This() {
         }
     }
 
-    return self;
+    return this;
 }
 
-pub fn deinit(self: *@This()) void {
-    self.cubes.deinit();
-    self.visualizedSpaces.deinit();
+pub fn deinit(this: *@This()) void {
+    this.cubes.deinit();
+    this.visualizedSpaces.deinit();
 }
 
-pub fn update(self: *@This(), space: xr.XrSpace, input: *InputState, predictedDisplayTime: i64) ![]geometry.Cube {
+pub fn update(
+    this: *@This(),
+    space: xr.XrSpace,
+    input: *InputState,
+    predictedDisplayTime: i64,
+) ![]geometry.Cube {
     // For each locatable space that we want to visualize, render a 25cm cube.
-    try self.cubes.resize(0);
+    try this.cubes.resize(0);
 
-    for (self.visualizedSpaces.items) |visualizedSpace| {
+    // left
+    if (try this.handLeft.locate(
+        this.ext_handTracking,
+        space,
+        predictedDisplayTime,
+    )) |joints| {
+        for (joints) |joint| {
+            try this.cubes.append(.{
+                .Pose = joint.pose,
+                .Scale = .{ .x = 0.02, .y = 0.02, .z = 0.02 },
+            });
+        }
+    }
+    // right
+    if (try this.handRight.locate(
+        this.ext_handTracking,
+        space,
+        predictedDisplayTime,
+    )) |joints| {
+        for (joints) |joint| {
+            try this.cubes.append(.{
+                .Pose = joint.pose,
+                .Scale = .{ .x = 0.02, .y = 0.02, .z = 0.02 },
+            });
+        }
+    }
+
+    for (this.visualizedSpaces.items) |visualizedSpace| {
         var spaceLocation = xr.XrSpaceLocation{
             .type = xr.XR_TYPE_SPACE_LOCATION,
         };
@@ -68,7 +116,7 @@ pub fn update(self: *@This(), space: xr.XrSpace, input: *InputState, predictedDi
             if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
                 (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
             {
-                try self.cubes.append(.{
+                try this.cubes.append(.{
                     .Pose = spaceLocation.pose,
                     .Scale = .{ .x = 0.25, .y = 0.25, .z = 0.25 },
                 });
@@ -102,7 +150,7 @@ pub fn update(self: *@This(), space: xr.XrSpace, input: *InputState, predictedDi
                 (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
             {
                 const scale = 0.1 * input.handScale[hand];
-                try self.cubes.append(.{
+                try this.cubes.append(.{
                     .Pose = spaceLocation.pose,
                     .Scale = .{ .x = scale, .y = scale, .z = scale },
                 });
@@ -120,7 +168,7 @@ pub fn update(self: *@This(), space: xr.XrSpace, input: *InputState, predictedDi
         }
     }
 
-    return self.cubes.items;
+    return this.cubes.items;
 }
 
 pub fn getXrReferenceSpaceCreateInfo(referenceSpaceTypeStr: []const u8) !xr.XrReferenceSpaceCreateInfo {

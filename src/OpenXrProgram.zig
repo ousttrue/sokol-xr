@@ -6,6 +6,7 @@ const xr_result = @import("xr_result.zig");
 const geometry = @import("geometry.zig");
 const c = xr_util.c;
 const InputState = @import("InputState.zig");
+const get_proc = @import("get_proc.zig");
 
 const xr_gen = @import("openxr");
 const xr = xr_gen.c;
@@ -36,29 +37,9 @@ eventDataBuffer: xr.XrEventDataBuffer = .{},
 input: InputState = .{},
 
 // extensions
-passthrough: xr_gen.extensions.XR_FB_passthrough = .{},
+ext_passthrough: xr_gen.extensions.XR_FB_passthrough = .{},
 passthroughFeature: xr.XrPassthroughFB = null,
 passthroughLayer: xr.XrPassthroughLayerFB = null,
-
-pub extern fn xrGetInstanceProcAddr(
-    instance: *anyopaque,
-    procname: [*:0]const u8,
-    function: *anyopaque,
-) i64;
-
-pub fn getProcs(
-    loader: anytype,
-    instance: *anyopaque,
-    table: anytype,
-) void {
-    inline for (std.meta.fields(@typeInfo(@TypeOf(table)).pointer.child)) |field| {
-        const name: [*:0]const u8 = @ptrCast(field.name ++ "\x00");
-        var cmd_ptr: xr.PFN_xrVoidFunction = undefined;
-        const result = loader(instance, name, @ptrCast(&cmd_ptr));
-        if (result != 0) @panic("loader");
-        @field(table, field.name) = @ptrCast(cmd_ptr);
-    }
-}
 
 const ACCEPTABLE_BLENDMODES = [_]xr.XrEnvironmentBlendMode{
     xr.XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
@@ -75,9 +56,9 @@ pub fn init(
         .allocator = allocator,
         .options = options,
         .graphics = graphics,
-        .configViews = std.array_list.Managed(xr.XrViewConfigurationView).init(allocator),
-        .views = std.array_list.Managed(xr.XrView).init(allocator),
-        .swapchains = std.array_list.Managed(Swapchain).init(allocator),
+        .configViews = .init(allocator),
+        .views = .init(allocator),
+        .swapchains = .init(allocator),
     };
 }
 
@@ -252,7 +233,7 @@ pub fn initializeSystem(this: *@This()) !void {
         std.log.warn("Passthrough not supported", .{});
     }
 
-    getProcs(xrGetInstanceProcAddr, @ptrCast(this.instance), &this.passthrough);
+    get_proc.getProcs(@ptrCast(this.instance), &this.ext_passthrough);
 }
 
 pub fn getPreferredBlendMode(this: @This()) !xr.XrEnvironmentBlendMode {
@@ -432,7 +413,7 @@ pub fn initializeSession(this: *@This()) !void {
         .type = xr.XR_TYPE_PASSTHROUGH_CREATE_INFO_FB,
         .flags = xr.XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB,
     };
-    try xr_result.check(this.passthrough.xrCreatePassthroughFB.?(
+    try xr_result.check(this.ext_passthrough.xrCreatePassthroughFB.?(
         this.session,
         &passthroughCreateInfo,
         &this.passthroughFeature,
@@ -444,7 +425,7 @@ pub fn initializeSession(this: *@This()) !void {
         .purpose = xr.XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB,
         .flags = xr.XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB,
     };
-    try xr_result.check(this.passthrough.xrCreatePassthroughLayerFB.?(
+    try xr_result.check(this.ext_passthrough.xrCreatePassthroughLayerFB.?(
         this.session,
         &layerCreateInfo,
         &this.passthroughLayer,
@@ -790,12 +771,12 @@ pub fn endFrame(
 
     var composition_layers: [2]*xr.XrCompositionLayerBaseHeader = undefined;
     var composition_layer_projection: xr.XrCompositionLayerProjection = undefined;
-    var composition_layer_passthrough = xr.XrCompositionLayerPassthroughFB{
-        .type = xr.XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
-        .layerHandle = this.passthroughLayer,
-        .flags = xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
-        .space = null,
-    };
+    // var composition_layer_passthrough = xr.XrCompositionLayerPassthroughFB{
+    //     .type = xr.XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
+    //     .layerHandle = this.passthroughLayer,
+    //     .flags = xr.XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+    //     .space = null,
+    // };
 
     if (views.len > 0) {
         composition_layer_projection = .{
@@ -813,11 +794,11 @@ pub fn endFrame(
         frameEndInfo.layers = &composition_layers[0];
     }
 
-    {
-        composition_layers[frameEndInfo.layerCount] = @ptrCast(&composition_layer_passthrough);
-        frameEndInfo.layerCount += 1;
-        frameEndInfo.layers = &composition_layers[0];
-    }
+    // {
+    //     composition_layers[frameEndInfo.layerCount] = @ptrCast(&composition_layer_passthrough);
+    //     frameEndInfo.layerCount += 1;
+    //     frameEndInfo.layers = &composition_layers[0];
+    // }
 
     try xr_result.check(xr.xrEndFrame(this.session, &frameEndInfo));
 }
