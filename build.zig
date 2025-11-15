@@ -63,35 +63,46 @@ fn build_exe(
     const openxr_dep = b.dependency("openxr", .{});
     exe.addIncludePath(openxr_dep.path("include"));
 
+    const t = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/xr_win32.h"),
+        .link_libc = true,
+    });
+    t.addIncludePath(openxr_dep.path("include"));
+    const c_mod = t.createModule();
+    exe.root_module.addImport("c", c_mod);
+
     const zbk_dep = b.dependency(ZBK_DEP, .{
         // .version = "1_1_52",
         .openxr = openxr_dep.path(""),
-        .target = target,
-        .optimize = optimize,
     });
-    const vcenv_wf = zbk_dep.namedWriteFiles("vcenv");
-    const vcenv = vcenv_wf.getDirectory().path(b, "vcenv");
-    const openxr_mod = zbk_dep.module("openxr");
+    const openxr_mod = b.addModule("openxr", .{
+        .root_source_file = zbk_dep.namedWriteFiles("openxr").getDirectory().path(b, "xr.zig"),
+    });
+    openxr_mod.addImport("c", c_mod);
     exe.root_module.addImport("openxr", openxr_mod);
 
     // const vcenv = try zbk.windows.VcEnv.init(b.allocator);
-    const openxr_loader = zbk.cpp.cmake.build(b, .{
-        .source = openxr_dep.path(""),
+    const openxr_loader = zbk.cpp.CMakeStep.create(b, .{
+        .source = openxr_dep.path("").getPath(b),
         .build_dir_name = "build-win32",
-        .vcenv = vcenv,
+        .use_vcenv = true,
         .args = &.{"-DDYNAMIC_LOADER=ON"},
     });
-    exe.addLibraryPath(openxr_loader.prefix.getDirectory().path(b, "lib"));
+    exe.addLibraryPath(openxr_loader.getInstallPrefix().path(b, "lib"));
     exe.linkSystemLibrary("openxr_loader");
+
     // copy dll
     const dll = b.addInstallBinFile(
-        openxr_loader.prefix.getDirectory().path(b, "bin/openxr_loader.dll"),
+        openxr_loader.getInstallPrefix().path(b, "bin/openxr_loader.dll"),
         "openxr_loader.dll",
     );
     b.getInstallStep().dependOn(&dll.step);
 
     // glad
     exe.addIncludePath(b.path("src/external/glad2/include"));
+    t.addIncludePath(b.path("src/external/glad2/include"));
     exe.addCSourceFiles(.{
         .root = b.path("src"),
         .files = &.{
@@ -173,13 +184,13 @@ fn build_android_so(
 
     // openxr_loader
     const openxr_dep = b.dependency("openxr", .{});
-    const openxr_loader = zbk.cpp.cmake.build(b, .{
-        .source = openxr_dep.path(""),
+    const openxr_loader = zbk.cpp.CMakeStep.create(b, .{
+        .source = openxr_dep.path("").getPath(b),
         .build_dir_name = "build-android",
         .ndk_path = ndk_path,
         .args = &.{"-DDYNAMIC_LOADER=ON"},
     });
-    lib.addLibraryPath(openxr_loader.prefix.getDirectory().path(b, "lib"));
+    lib.addLibraryPath(openxr_loader.getInstallPrefix().path(b, "lib"));
     lib.linkSystemLibrary("openxr_loader");
 
     // translate-c
@@ -189,9 +200,18 @@ fn build_android_so(
         .root_source_file = b.path("src/xr_android.h"),
     });
     t.addIncludePath(openxr_dep.path("include"));
-    const openxr_mod = t.createModule();
+    const c_mod = t.createModule();
+    lib.root_module.addImport("c", c_mod);
+
+    const zbk_dep = b.dependency(ZBK_DEP, .{
+        // .version = "1_1_52",
+        .openxr = openxr_dep.path(""),
+    });
+    const openxr_mod = b.addModule("openxr", .{
+        .root_source_file = zbk_dep.namedWriteFiles("openxr").getDirectory().path(b, "xr.zig"),
+    });
+    openxr_mod.addImport("c", c_mod);
     lib.root_module.addImport("openxr", openxr_mod);
-    lib.addIncludePath(openxr_dep.path("include"));
 
     // sokol
     const sokol_dep = b.dependency("sokol", .{
@@ -243,7 +263,6 @@ fn build_android_so(
 
     // native_app_glue (android_main dependency)
     t.addIncludePath(.{ .cwd_relative = b.fmt("{s}/sources/android/native_app_glue", .{ndk_path}) });
-    openxr_mod.addIncludePath(.{ .cwd_relative = b.fmt("{s}/sources/android/native_app_glue", .{ndk_path}) });
     lib.addCSourceFile(.{ .file = .{ .cwd_relative = b.fmt(
         "{s}/sources/android/native_app_glue/android_native_app_glue.c",
         .{ndk_path},
@@ -276,7 +295,7 @@ fn build_android_so(
                 .dst = "lib/arm64-v8a/libmain.so",
             },
             .{
-                .src = openxr_loader.prefix.getDirectory().path(b, "lib/libopenxr_loader.so"),
+                .src = openxr_loader.getInstallPrefix().path(b, "lib/libopenxr_loader.so"),
                 .dst = "lib/arm64-v8a/libopenxr_loader.so",
             },
         },

@@ -19,3 +19,11 @@ or Android(Quest3)
 ## based hello_xr
 
 - https://github.com/KhronosGroup/OpenXR-SDK-Source/tree/main/src/tests/hello_xr
+
+## TODO
+
+- [ ] passthrough depth
+- [ ] scene model
+- [ ] hand tracking
+- [ ] ros rcv image
+- [ ] ros send transform

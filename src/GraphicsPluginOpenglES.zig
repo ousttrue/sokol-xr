@@ -1,8 +1,8 @@
 const std = @import("std");
 const GraphicsPlugin = @import("GraphicsPlugin.zig");
-const xr = @import("openxr");
 const xr_util = @import("xr_util.zig");
-const c = xr_util.c;
+// const c = xr_util.c;
+const c = @import("c");
 const xr_result = @import("xr_result.zig");
 const xr_linear = @import("xr_linear.zig");
 
@@ -24,11 +24,11 @@ pub fn selectColorSwapchainFormat(runtimeFormats: []i64) ?i64 {
     return null;
 }
 
-pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
+pub fn getSupportedSwapchainSampleCount(_: c.XrViewConfigurationView) u32 {
     return 1;
 }
 
-pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
+pub fn calcViewProjectionMatrix(fov: c.XrFovf, view_pose: c.XrPosef) xr_linear.Matrix4x4f {
     const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL_ES, fov, 0.05, 100.0);
     const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
     const view = toView.invertRigidBody();
@@ -50,8 +50,8 @@ const vtable = GraphicsPlugin.VTable{
 };
 
 allocator: std.mem.Allocator,
-swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageOpenGLESKHR),
-graphicsBinding: xr.XrGraphicsBindingOpenGLESAndroidKHR = .{},
+swapchainBufferMap: std.AutoHashMap(c.XrSwapchain, []c.XrSwapchainImageOpenGLESKHR),
+graphicsBinding: c.XrGraphicsBindingOpenGLESAndroidKHR = .{},
 
 pub const InitOptions = struct {
     allocator: std.mem.Allocator,
@@ -66,7 +66,7 @@ pub fn create(opts: InitOptions) !*@This() {
         .allocator = opts.allocator,
         .swapchainBufferMap = .init(opts.allocator),
         .graphicsBinding = .{
-            .type = xr.XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR,
+            .type = c.XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR,
             .next = null,
             .display = opts.display,
             .config = null,
@@ -93,23 +93,23 @@ pub fn destroy(_self: *anyopaque) void {
     self.allocator.destroy(self);
 }
 
-pub fn initializeDevice(_self: *anyopaque, instance: xr.XrInstance, systemId: xr.XrSystemId) xr_result.Error!void {
+pub fn initializeDevice(_self: *anyopaque, instance: c.XrInstance, systemId: c.XrSystemId) xr_result.Error!void {
     std.log.debug("initializeDevice", .{});
     _ = _self;
     // const self: *@This() = @ptrCast(@alignCast(_self));
     // Extension function must be loaded by name
-    var pfnGetOpenGLESGraphicsRequirementsKHR: xr.PFN_xrGetOpenGLESGraphicsRequirementsKHR = undefined;
-    try xr_result.check(xr.xrGetInstanceProcAddr(
-        instance,
+    var pfnGetOpenGLESGraphicsRequirementsKHR: c.PFN_xrGetOpenGLESGraphicsRequirementsKHR = undefined;
+    try xr_result.check(c.xrGetInstanceProcAddr(
+        @ptrCast(instance),
         "xrGetOpenGLESGraphicsRequirementsKHR",
         &pfnGetOpenGLESGraphicsRequirementsKHR,
     ));
 
-    var graphicsRequirements = xr.XrGraphicsRequirementsOpenGLESKHR{
-        .type = xr.XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR,
+    var graphicsRequirements = c.XrGraphicsRequirementsOpenGLESKHR{
+        .type = c.XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR,
         .next = null,
     };
-    try xr_result.check((pfnGetOpenGLESGraphicsRequirementsKHR.?)(instance, systemId, &graphicsRequirements));
+    try xr_result.check((pfnGetOpenGLESGraphicsRequirementsKHR.?)(@ptrCast(instance), systemId, &graphicsRequirements));
     std.log.debug("minApiVersionSupported: {}", .{
         xr_util.ExtractVersion.fromXrVersion(graphicsRequirements.minApiVersionSupported),
     });
@@ -140,7 +140,7 @@ pub fn initializeDevice(_self: *anyopaque, instance: xr.XrInstance, systemId: xr
     var minor: c.GLint = 0;
     c.glGetIntegerv(c.GL_MAJOR_VERSION, &major);
     c.glGetIntegerv(c.GL_MINOR_VERSION, &minor);
-    const desiredApiVersion: xr.XrVersion = xr.XR_MAKE_VERSION(
+    const desiredApiVersion: c.XrVersion = c.XR_MAKE_VERSION(
         @as(u64, @intCast(major)),
         @as(u64, @intCast(minor)),
         0,
@@ -166,24 +166,24 @@ pub fn initializeDevice(_self: *anyopaque, instance: xr.XrInstance, systemId: xr
     //             this);
 }
 
-pub fn getGraphicsBinding(_self: *anyopaque) ?*const xr.XrBaseInStructure {
+pub fn getGraphicsBinding(_self: *anyopaque) ?*const c.XrBaseInStructure {
     const self: *@This() = @ptrCast(@alignCast(_self));
     return @ptrCast(&self.graphicsBinding);
 }
 
 pub fn allocateSwapchainImageStructs(
     _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
+    swapchain: c.XrSwapchain,
     image_count: u32,
-) *xr.XrSwapchainImageBaseHeader {
+) *c.XrSwapchainImageBaseHeader {
     const self: *@This() = @ptrCast(@alignCast(_self));
     // Allocate and initialize the buffer of image structs
     // (must be sequential in memory for xrEnumerateSwapchainImages).
     // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-    const images = self.allocator.alloc(xr.XrSwapchainImageOpenGLESKHR, image_count) catch @panic("OOM");
+    const images = self.allocator.alloc(c.XrSwapchainImageOpenGLESKHR, image_count) catch @panic("OOM");
     for (images) |*image| {
         image.* = .{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR,
+            .type = c.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR,
         };
     }
     self.swapchainBufferMap.put(swapchain, images) catch @panic("OOM");
@@ -192,7 +192,7 @@ pub fn allocateSwapchainImageStructs(
 
 pub fn getSwapchainImage(
     _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
+    swapchain: c.XrSwapchain,
     image_index: u32,
 ) GraphicsPlugin.SwapchainImage {
     const self: *@This() = @ptrCast(@alignCast(_self));

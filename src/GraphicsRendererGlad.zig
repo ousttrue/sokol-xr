@@ -2,7 +2,7 @@ const std = @import("std");
 const xr_gen = @import("openxr");
 const xr = xr_gen.c;
 const xr_util = @import("xr_util.zig");
-const c = xr_util.c;
+const c = @import("c");
 const geometry = @import("geometry.zig");
 const xr_linear = @import("xr_linear.zig");
 

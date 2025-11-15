@@ -2,12 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
-const c = xr_util.c;
-const xr = @import("openxr").c;
+// const c = xr_util.c;
 const xr_result = @import("xr_result.zig");
 const geometry = @import("geometry.zig");
 const xr_linear = @import("xr_linear.zig");
 const xr_gl = @import("xr_gl.zig");
+const c = @import("c");
 
 const INSTANCE_EXTENSIONS = [_][]const u8{"XR_KHR_opengl_enable"};
 
@@ -19,11 +19,11 @@ pub fn selectColorSwapchainFormat(runtimeFormats: []i64) ?i64 {
     return xr_gl.selectColorSwapchainFormat(runtimeFormats);
 }
 
-pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
+pub fn getSupportedSwapchainSampleCount(_: c.XrViewConfigurationView) u32 {
     return 1;
 }
 
-pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
+pub fn calcViewProjectionMatrix(fov: c.XrFovf, view_pose: c.XrPosef) xr_linear.Matrix4x4f {
     const proj = xr_linear.Matrix4x4f.createProjectionFov(.OPENGL, fov, 0.05, 100.0);
     const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
     const view = toView.invertRigidBody();
@@ -46,9 +46,9 @@ const vtable = GraphicsPlugin.VTable{
 
 allocator: std.mem.Allocator,
 window: c.ksGpuWindow = .{},
-graphicsBinding: xr.XrGraphicsBindingOpenGLWin32KHR = .{},
+graphicsBinding: c.XrGraphicsBindingOpenGLWin32KHR = .{},
 
-swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageOpenGLKHR),
+swapchainBufferMap: std.AutoHashMap(c.XrSwapchain, []c.XrSwapchainImageOpenGLKHR),
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
@@ -82,15 +82,15 @@ pub fn destroy(_self: *anyopaque) void {
 
 pub fn initializeDevice(
     _self: *anyopaque,
-    instance: xr.XrInstance,
-    systemId: xr.XrSystemId,
+    instance: c.XrInstance,
+    systemId: c.XrSystemId,
 ) xr_result.Error!void {
     const self: *@This() = @ptrCast(@alignCast(_self));
 
     try xr_gl.initializeDevice(instance, systemId, &self.window);
     if (builtin.target.os.tag == .windows) {
         self.graphicsBinding = .{
-            .type = xr.XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR,
+            .type = c.XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR,
             .hDC = @ptrCast(self.window.context.hDC),
             .hGLRC = @ptrCast(self.window.context.hGLRC),
         };
@@ -99,24 +99,24 @@ pub fn initializeDevice(
     }
 }
 
-pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
+pub fn getGraphicsBinding(_self: *anyopaque) *const c.XrBaseInStructure {
     const self: *@This() = @ptrCast(@alignCast(_self));
     return @ptrCast(&self.graphicsBinding);
 }
 
 pub fn allocateSwapchainImageStructs(
     _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
+    swapchain: c.XrSwapchain,
     image_count: u32,
-) *xr.XrSwapchainImageBaseHeader {
+) *c.XrSwapchainImageBaseHeader {
     const self: *@This() = @ptrCast(@alignCast(_self));
     // Allocate and initialize the buffer of image structs
     // (must be sequential in memory for xrEnumerateSwapchainImages).
     // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-    const images = self.allocator.alloc(xr.XrSwapchainImageOpenGLKHR, image_count) catch @panic("OOM");
+    const images = self.allocator.alloc(c.XrSwapchainImageOpenGLKHR, image_count) catch @panic("OOM");
     for (images) |*image| {
         image.* = .{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
+            .type = c.XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
         };
     }
     self.swapchainBufferMap.put(swapchain, images) catch @panic("OOM");
@@ -125,10 +125,10 @@ pub fn allocateSwapchainImageStructs(
 
 // pub fn renderView(
 //     _self: *anyopaque,
-//     swapchain: xr.XrSwapchain,
+//     swapchain: c.XrSwapchain,
 //     image_index: u32,
 //     format: i64,
-//     extent: xr.XrExtent2Di,
+//     extent: c.XrExtent2Di,
 //     vp: xr_linear.Matrix4x4f,
 //     cubes: []geometry.Cube,
 // ) void {
@@ -143,7 +143,7 @@ pub fn allocateSwapchainImageStructs(
 
 pub fn getSwapchainImage(
     _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
+    swapchain: c.XrSwapchain,
     image_index: u32,
 ) GraphicsPlugin.SwapchainImage {
     const self: *@This() = @ptrCast(@alignCast(_self));

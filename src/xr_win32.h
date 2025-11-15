@@ -5,3 +5,7 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <openxr/openxr_platform.h>
+
+#include "graphicsplugin_d3d11.h"
+#include "dxgi.h"
+#include "common/gfxwrapper_opengl.h"

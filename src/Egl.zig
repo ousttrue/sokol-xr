@@ -1,6 +1,6 @@
 const std = @import("std");
 const xr_util = @import("xr_util.zig");
-const c = xr_util.c;
+const c = @import("c");
 
 const ksGpuSurfaceColorFormat = enum {
     KS_GPU_SURFACE_COLOR_FORMAT_R5G6B5,

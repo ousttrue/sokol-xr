@@ -1,24 +1,23 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const xr = @import("openxr").c;
+const c = @import("c");
 const xr_result = @import("xr_result.zig");
 const xr_util = @import("xr_util.zig");
-const c = xr_util.c;
 
 pub fn initializeDevice(
-    instance: xr.XrInstance,
-    systemId: xr.XrSystemId,
+    instance: c.XrInstance,
+    systemId: c.XrSystemId,
     window: *c.ksGpuWindow,
 ) !void {
-    var pfnGetOpenGLGraphicsRequirementsKHR: xr.PFN_xrGetOpenGLGraphicsRequirementsKHR = null;
-    try xr_result.check(xr.xrGetInstanceProcAddr(
+    var pfnGetOpenGLGraphicsRequirementsKHR: c.PFN_xrGetOpenGLGraphicsRequirementsKHR = null;
+    try xr_result.check(c.xrGetInstanceProcAddr(
         instance,
         "xrGetOpenGLGraphicsRequirementsKHR",
         &pfnGetOpenGLGraphicsRequirementsKHR,
     ));
 
-    var graphicsRequirements = xr.XrGraphicsRequirementsOpenGLKHR{
-        .type = xr.XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR,
+    var graphicsRequirements = c.XrGraphicsRequirementsOpenGLKHR{
+        .type = c.XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR,
     };
     try xr_result.check(pfnGetOpenGLGraphicsRequirementsKHR.?(
         instance,
@@ -52,7 +51,7 @@ pub fn initializeDevice(
     c.glGetIntegerv(c.GL_MAJOR_VERSION, &major);
     c.glGetIntegerv(c.GL_MINOR_VERSION, &minor);
 
-    const desiredApiVersion = xr.XR_MAKE_VERSION(
+    const desiredApiVersion = c.XR_MAKE_VERSION(
         @as(i64, @intCast(major)),
         @as(i64, @intCast(minor)),
         0,

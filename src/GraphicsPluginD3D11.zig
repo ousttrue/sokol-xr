@@ -3,14 +3,10 @@ const GraphicsPlugin = @import("GraphicsPlugin.zig");
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const xr_linear = @import("xr_linear.zig");
-const xr = @import("openxr").c;
+const c = @import("c");
 const geometry = @import("geometry.zig");
-const c = @cImport({
-    @cInclude("graphicsplugin_d3d11.h");
-    @cInclude("dxgi.h");
-});
 
-const INSTANCE_EXTENSIONS = [_][]const u8{xr.XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+const INSTANCE_EXTENSIONS = [_][]const u8{c.XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
 
 pub fn getInstanceExtensions() []const []const u8 {
     return &INSTANCE_EXTENSIONS;
@@ -36,11 +32,11 @@ pub fn selectColorSwapchainFormat(runtimeFormats: []i64) ?i64 {
     xr_util.my_panic("No runtime swapchain format supported for color swapchain", .{});
 }
 
-pub fn getSupportedSwapchainSampleCount(_: xr.XrViewConfigurationView) u32 {
+pub fn getSupportedSwapchainSampleCount(_: c.XrViewConfigurationView) u32 {
     return 1;
 }
 
-pub fn calcViewProjectionMatrix(fov: xr.XrFovf, view_pose: xr.XrPosef) xr_linear.Matrix4x4f {
+pub fn calcViewProjectionMatrix(fov: c.XrFovf, view_pose: c.XrPosef) xr_linear.Matrix4x4f {
     const proj = xr_linear.Matrix4x4f.createProjectionFov(.D3D, fov, 0.05, 100.0);
     const toView = xr_linear.Matrix4x4f.createFromRigidTransform(view_pose);
     const view = toView.invertRigidBody();
@@ -62,7 +58,7 @@ const vtable = GraphicsPlugin.VTable{
 };
 
 allocator: std.mem.Allocator,
-swapchainBufferMap: std.AutoHashMap(xr.XrSwapchain, []xr.XrSwapchainImageD3D11KHR),
+swapchainBufferMap: std.AutoHashMap(c.XrSwapchain, []c.XrSwapchainImageD3D11KHR),
 impl: *anyopaque,
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
@@ -95,31 +91,31 @@ pub fn destroy(_self: *anyopaque) void {
 
 pub fn initializeDevice(
     _self: *anyopaque,
-    instance: xr.XrInstance,
-    systemId: xr.XrSystemId,
+    instance: c.XrInstance,
+    systemId: c.XrSystemId,
 ) xr_result.Error!void {
     const self: *@This() = @ptrCast(@alignCast(_self));
     try xr_result.check(c.initializeDevice(self.impl, instance, systemId));
 }
 
-pub fn getGraphicsBinding(_self: *anyopaque) *const xr.XrBaseInStructure {
+pub fn getGraphicsBinding(_self: *anyopaque) *const c.XrBaseInStructure {
     const self: *@This() = @ptrCast(@alignCast(_self));
     return @ptrCast(@alignCast(c.getGraphicsBinding(self.impl)));
 }
 
 pub fn allocateSwapchainImageStructs(
     _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
+    swapchain: c.XrSwapchain,
     image_count: u32,
-) *xr.XrSwapchainImageBaseHeader {
+) *c.XrSwapchainImageBaseHeader {
     const self: *@This() = @ptrCast(@alignCast(_self));
     // Allocate and initialize the buffer of image structs
     // (must be sequential in memory for xrEnumerateSwapchainImages).
     // Return back an array of pointers to each swapchain image struct so the consumer doesn't need to know the type/size.
-    const images = self.allocator.alloc(xr.XrSwapchainImageD3D11KHR, image_count) catch @panic("OOM");
+    const images = self.allocator.alloc(c.XrSwapchainImageD3D11KHR, image_count) catch @panic("OOM");
     for (images) |*image| {
         image.* = .{
-            .type = xr.XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR,
+            .type = c.XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR,
         };
     }
     self.swapchainBufferMap.put(swapchain, images) catch @panic("OOM");
@@ -128,7 +124,7 @@ pub fn allocateSwapchainImageStructs(
 
 pub fn getSwapchainImage(
     _self: *anyopaque,
-    swapchain: xr.XrSwapchain,
+    swapchain: c.XrSwapchain,
     image_index: u32,
 ) GraphicsPlugin.SwapchainImage {
     const self: *@This() = @ptrCast(@alignCast(_self));

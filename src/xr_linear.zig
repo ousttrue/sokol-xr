@@ -1,4 +1,4 @@
-const xr = @import("openxr").c;
+const c = @import("c");
 
 pub const GraphicsAPI = enum {
     VULKAN,
@@ -67,7 +67,7 @@ pub const Matrix4x4f = struct {
     // Creates a projection matrix based on the specified FOV.
     pub fn createProjectionFov(
         graphicsApi: GraphicsAPI,
-        fov: xr.XrFovf,
+        fov: c.XrFovf,
         nearZ: f32,
         farZ: f32,
     ) @This() {
@@ -150,7 +150,7 @@ pub const Matrix4x4f = struct {
         return result;
     }
 
-    pub fn createFromRigidTransform(s: xr.XrPosef) @This() {
+    pub fn createFromRigidTransform(s: c.XrPosef) @This() {
         return createTranslationRotationScale(
             s.position,
             s.orientation,
@@ -160,9 +160,9 @@ pub const Matrix4x4f = struct {
 
     // Creates a combined translation(rotation(scale(object))) matrix.
     pub fn createTranslationRotationScale(
-        translation: xr.XrVector3f,
-        rotation: xr.XrQuaternionf,
-        scale: xr.XrVector3f,
+        translation: c.XrVector3f,
+        rotation: c.XrQuaternionf,
+        scale: c.XrVector3f,
     ) @This() {
         const scaleMatrix = createScale(scale.x, scale.y, scale.z);
         const rotationMatrix = createFromQuaternion(rotation);
@@ -183,7 +183,7 @@ pub const Matrix4x4f = struct {
     }
 
     // Creates a matrix from a quaternion.
-    pub fn createFromQuaternion(quat: xr.XrQuaternionf) @This() {
+    pub fn createFromQuaternion(quat: c.XrQuaternionf) @This() {
         const x2 = quat.x + quat.x;
         const y2 = quat.y + quat.y;
         const z2 = quat.z + quat.z;

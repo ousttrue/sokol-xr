@@ -1,24 +1,24 @@
 const std = @import("std");
-const xr_gen = @import("openxr");
-const xr = xr_gen.c;
+const c = @import("c");
 const xr_util = @import("xr_util.zig");
 const geometry = @import("geometry.zig");
 const InputState = @import("InputState.zig");
 const get_proc = @import("get_proc.zig");
 const HandTracking = @import("HandTracking.zig");
+const xr = @import("openxr");
 
 allocator: std.mem.Allocator,
 cubes: std.array_list.Managed(geometry.Cube),
-visualizedSpaces: std.array_list.Managed(xr.XrSpace),
+visualizedSpaces: std.array_list.Managed(c.XrSpace),
 
-ext_handTracking: xr_gen.extensions.XR_EXT_hand_tracking = .{},
+ext_handTracking: xr.extensions.XR_EXT_hand_tracking = .{},
 handLeft: HandTracking = .{},
 handRight: HandTracking = .{},
 
 pub fn init(
     allocator: std.mem.Allocator,
-    instance: xr.XrInstance,
-    session: xr.XrSession,
+    instance: c.XrInstance,
+    session: c.XrSession,
 ) !@This() {
 
     // fn createVisualizedSpaces(this: *@This()) !void {
@@ -45,8 +45,8 @@ pub fn init(
 
     for (visualizedSpaces) |visualizedSpace| {
         const referenceSpaceCreateInfo = try getXrReferenceSpaceCreateInfo(visualizedSpace);
-        var space: xr.XrSpace = undefined;
-        const res = xr.xrCreateReferenceSpace(session, &referenceSpaceCreateInfo, &space);
+        var space: c.XrSpace = undefined;
+        const res = c.xrCreateReferenceSpace(session, &referenceSpaceCreateInfo, &space);
         if (res == 0) {
             try this.visualizedSpaces.append(space);
         } else {
@@ -67,7 +67,7 @@ pub fn deinit(this: *@This()) void {
 
 pub fn update(
     this: *@This(),
-    space: xr.XrSpace,
+    space: c.XrSpace,
     input: *InputState,
     predictedDisplayTime: i64,
 ) ![]geometry.Cube {
@@ -102,19 +102,19 @@ pub fn update(
     }
 
     for (this.visualizedSpaces.items) |visualizedSpace| {
-        var spaceLocation = xr.XrSpaceLocation{
-            .type = xr.XR_TYPE_SPACE_LOCATION,
+        var spaceLocation = c.XrSpaceLocation{
+            .type = c.XR_TYPE_SPACE_LOCATION,
         };
-        const res = xr.xrLocateSpace(
+        const res = c.xrLocateSpace(
             visualizedSpace,
             space,
             predictedDisplayTime,
             &spaceLocation,
         );
         try xr_util.assert(res == 0); //, "xrLocateSpace");
-        if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
-            if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
-                (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+        if (c.XR_UNQUALIFIED_SUCCESS(res)) {
+            if ((spaceLocation.locationFlags & c.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
+                (spaceLocation.locationFlags & c.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
             {
                 try this.cubes.append(.{
                     .Pose = spaceLocation.pose,
@@ -135,19 +135,19 @@ pub fn update(
     };
     const hands = [2]u32{ Side.LEFT, Side.RIGHT };
     for (hands) |hand| {
-        var spaceLocation = xr.XrSpaceLocation{
-            .type = xr.XR_TYPE_SPACE_LOCATION,
+        var spaceLocation = c.XrSpaceLocation{
+            .type = c.XR_TYPE_SPACE_LOCATION,
         };
-        const res = xr.xrLocateSpace(
+        const res = c.xrLocateSpace(
             input.handSpace[hand],
             space,
             predictedDisplayTime,
             &spaceLocation,
         );
         // std.debug.assert(res == 0); //, "xrLocateSpace");
-        if (xr.XR_UNQUALIFIED_SUCCESS(res)) {
-            if ((spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
-                (spaceLocation.locationFlags & xr.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+        if (c.XR_UNQUALIFIED_SUCCESS(res)) {
+            if ((spaceLocation.locationFlags & c.XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 and
+                (spaceLocation.locationFlags & c.XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
             {
                 const scale = 0.1 * input.handScale[hand];
                 try this.cubes.append(.{
@@ -158,7 +158,7 @@ pub fn update(
         } else {
             // Tracking loss is expected when the hand is not active so only log a message
             // if the hand is active.
-            if (input.handActive[hand] == xr.XR_TRUE) {
+            if (input.handActive[hand] == c.XR_TRUE) {
                 const handName = [_][]const u8{ "left", "right" };
                 std.log.debug("Unable to locate {s} hand action space in app space: {}", .{
                     handName[hand],
@@ -171,45 +171,45 @@ pub fn update(
     return this.cubes.items;
 }
 
-pub fn getXrReferenceSpaceCreateInfo(referenceSpaceTypeStr: []const u8) !xr.XrReferenceSpaceCreateInfo {
-    var referenceSpaceCreateInfo = xr.XrReferenceSpaceCreateInfo{
-        .type = xr.XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
+pub fn getXrReferenceSpaceCreateInfo(referenceSpaceTypeStr: []const u8) !c.XrReferenceSpaceCreateInfo {
+    var referenceSpaceCreateInfo = c.XrReferenceSpaceCreateInfo{
+        .type = c.XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
         .poseInReferenceSpace = geometry.XrPosef_Identity(),
     };
     if (std.mem.eql(u8, referenceSpaceTypeStr, "View")) {
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_VIEW;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_VIEW;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "ViewFront")) {
         // Render head-locked 2m in front of device.
         referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_Translation(.{ .x = 0, .y = 0, .z = -2 });
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_VIEW;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_VIEW;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "Local")) {
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_LOCAL;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_LOCAL;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "Stage")) {
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_STAGE;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageLeft")) {
         referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
             0,
             .{ .x = -2, .y = 0, .z = -2 },
         );
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_STAGE;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageRight")) {
         referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
             0,
             .{ .x = 2, .y = 0, .z = -2 },
         );
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_STAGE;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageLeftRotated")) {
         referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
             3.14 / 3.0,
             .{ .x = -2, .y = 0.5, .z = -2 },
         );
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_STAGE;
     } else if (std.mem.eql(u8, referenceSpaceTypeStr, "StageRightRotated")) {
         referenceSpaceCreateInfo.poseInReferenceSpace = geometry.XrPosef_RotateCCWAboutYAxis(
             -3.14 / 3.0,
             .{ .x = 2, .y = 0.5, .z = -2 },
         );
-        referenceSpaceCreateInfo.referenceSpaceType = xr.XR_REFERENCE_SPACE_TYPE_STAGE;
+        referenceSpaceCreateInfo.referenceSpaceType = c.XR_REFERENCE_SPACE_TYPE_STAGE;
     } else {
         std.log.err("unknown_reference_space_type: {s}", .{referenceSpaceTypeStr});
         return error.unknown_reference_space_type;

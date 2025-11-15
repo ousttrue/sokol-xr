@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("xr_util.zig").c;
-const xr = @import("openxr").c;
+const xr = @import("c");
 
 pub const GraphicsPluginType = enum {
     D3D11,

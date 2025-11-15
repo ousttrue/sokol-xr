@@ -1,26 +1,26 @@
-const xr = @import("openxr").c;
+const c = @import("c");
 const xr_result = @import("xr_result.zig");
 
-actionSet: xr.XrActionSet = null,
+actionSet: c.XrActionSet = null,
 // XrAction grabAction{XR_NULL_HANDLE};
 // XrAction poseAction{XR_NULL_HANDLE};
 // XrAction vibrateAction{XR_NULL_HANDLE};
 // XrAction quitAction{XR_NULL_HANDLE};
 // std::array<XrPath, Side::COUNT> handSubactionPath;
-handSpace: [2]xr.XrSpace = .{ null, null },
+handSpace: [2]c.XrSpace = .{ null, null },
 handScale: [2]f32 = .{ 1.0, 1.0 },
-handActive: [2]xr.XrBool32 = .{ xr.XR_FALSE, xr.XR_FALSE },
+handActive: [2]c.XrBool32 = .{ c.XR_FALSE, c.XR_FALSE },
 
 pub fn initializeActions(self: *@This()) !void {
     // Create an action set.
     {
-        var actionSetInfo = xr.XrActionSetCreateInfo{
-            .type = xr.XR_TYPE_ACTION_SET_CREATE_INFO,
+        var actionSetInfo = c.XrActionSetCreateInfo{
+            .type = c.XR_TYPE_ACTION_SET_CREATE_INFO,
             .priority = 0,
         };
         //     strcpy_s(actionSetInfo.actionSetName, "gameplay");
         //     strcpy_s(actionSetInfo.localizedActionSetName, "Gameplay");
-        try xr_result.check(xr.xrCreateActionSet(self.instance, &actionSetInfo, &self.input.actionSet));
+        try xr_result.check(c.xrCreateActionSet(self.instance, &actionSetInfo, &self.input.actionSet));
     }
 
     // // Get the XrPath for the left and right hands - we will use them as subaction paths.

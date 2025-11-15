@@ -1,15 +1,16 @@
 const std = @import("std");
-const c = @import("xr_util.zig").c;
+// const c = @import("xr_util.zig").c;
 const Options = @import("Options.zig");
 const GraphicsPlugin = @import("GraphicsPluginOpenglES.zig");
 const OpenXrProgram = @import("OpenXrProgram.zig");
-const xr = @import("openxr");
+const xr = @import("openxr").c;
 const xr_util = @import("xr_util.zig");
 const xr_result = @import("xr_result.zig");
 const Egl = @import("Egl.zig");
 const Scene = @import("Scene.zig");
 const RendererGLES = @import("GraphicsRendererAndroidGLES.zig");
 const RendererSokol = @import("GraphicsRendererSokol.zig");
+const c = @import("c");
 
 // https://ziggit.dev/t/set-debug-level-at-runtime/6196/3
 pub const std_options: std.Options = .{
@@ -26,10 +27,10 @@ pub fn logFn(
     args: anytype,
 ) void {
     const priority = switch (message_level) {
-        .err => xr.ANDROID_LOG_ERROR,
-        .warn => xr.ANDROID_LOG_WARN,
-        .info => xr.ANDROID_LOG_INFO,
-        .debug => xr.ANDROID_LOG_DEBUG,
+        .err => c.ANDROID_LOG_ERROR,
+        .warn => c.ANDROID_LOG_WARN,
+        .info => c.ANDROID_LOG_INFO,
+        .debug => c.ANDROID_LOG_DEBUG,
     };
     const prefix = if (scope == .default) "" else "(" ++ @tagName(scope) ++ "): ";
 
@@ -45,7 +46,7 @@ pub fn logFn(
     }
     buf.buffer[buf.pos] = 0;
 
-    _ = xr.__android_log_write(priority, "ZIG", &buf.buffer);
+    _ = c.__android_log_write(priority, "ZIG", &buf.buffer);
 }
 
 fn updateOptionsFromSystemProperties(allocator: std.mem.Allocator) !Options {
@@ -53,23 +54,23 @@ fn updateOptionsFromSystemProperties(allocator: std.mem.Allocator) !Options {
         .GraphicsPlugin = .OpenGLES,
     };
 
-    var value: [xr.PROP_VALUE_MAX]c_char = undefined;
-    if (xr.__system_property_get("debug.xr.graphics_plugin", &value[0]) != 0) {
+    var value: [c.PROP_VALUE_MAX]c_char = undefined;
+    if (c.__system_property_get("debug.xr.graphics_plugin", &value[0]) != 0) {
         // options.GraphicsPlugin = try allocator.dupe(u8, std.mem.sliceTo(&value, 0));
         if (Options.GraphicsPluginType.fromStr(&value)) |graphics_type| {
             options.GraphicsPlugin = graphics_type;
         }
     }
 
-    if (xr.__system_property_get("debug.xr.formFactor", &value[0]) != 0) {
+    if (c.__system_property_get("debug.xr.formFactor", &value[0]) != 0) {
         options.FormFactor = try allocator.dupe(u8, std.mem.sliceTo(&value, 0));
     }
 
-    if (xr.__system_property_get("debug.xr.viewConfiguration", &value[0]) != 0) {
+    if (c.__system_property_get("debug.xr.viewConfiguration", &value[0]) != 0) {
         options.ViewConfiguration = try allocator.dupe(u8, std.mem.sliceTo(&value, 0));
     }
 
-    if (xr.__system_property_get("debug.xr.blendMode", &value[0]) != 0) {
+    if (c.__system_property_get("debug.xr.blendMode", &value[0]) != 0) {
         options.EnvironmentBlendMode = try allocator.dupe(u8, std.mem.sliceTo(&value, 0));
     }
 
@@ -79,46 +80,46 @@ fn updateOptionsFromSystemProperties(allocator: std.mem.Allocator) !Options {
 }
 
 const AndroidAppState = struct {
-    NativeWindow: ?*xr.ANativeWindow = null,
+    NativeWindow: ?*c.ANativeWindow = null,
     Resumed: bool = false,
 };
 
 // Process the next main command.
-export fn app_handle_cmd(app: [*c]xr.android_app, cmd: i32) void {
+export fn app_handle_cmd(app: [*c]c.android_app, cmd: i32) void {
     const appState: *AndroidAppState = @ptrCast(@alignCast(app.*.userData));
     switch (cmd) {
         // There is no APP_CMD_CREATE. The ANativeActivity creates the
         // application thread from onCreate(). The application thread
         // then calls android_main().
-        xr.APP_CMD_START => {
+        c.APP_CMD_START => {
             std.log.info("    APP_CMD_START", .{});
             std.log.info("onStart()", .{});
         },
-        xr.APP_CMD_RESUME => {
+        c.APP_CMD_RESUME => {
             std.log.info("onResume()", .{});
             std.log.info("    APP_CMD_RESUME", .{});
             appState.Resumed = true;
         },
-        xr.APP_CMD_PAUSE => {
+        c.APP_CMD_PAUSE => {
             std.log.info("onPause()", .{});
             std.log.info("    APP_CMD_PAUSE", .{});
             appState.Resumed = false;
         },
-        xr.APP_CMD_STOP => {
+        c.APP_CMD_STOP => {
             std.log.info("onStop()", .{});
             std.log.info("    APP_CMD_STOP", .{});
         },
-        xr.APP_CMD_DESTROY => {
+        c.APP_CMD_DESTROY => {
             std.log.info("onDestroy()", .{});
             std.log.info("    APP_CMD_DESTROY", .{});
             appState.NativeWindow = null;
         },
-        xr.APP_CMD_INIT_WINDOW => {
+        c.APP_CMD_INIT_WINDOW => {
             std.log.info("surfaceCreated()", .{});
             std.log.info("    APP_CMD_INIT_WINDOW", .{});
             appState.NativeWindow = app.*.window;
         },
-        xr.APP_CMD_TERM_WINDOW => {
+        c.APP_CMD_TERM_WINDOW => {
             std.log.info("surfaceDestroyed()", .{});
             std.log.info("    APP_CMD_TERM_WINDOW", .{});
             appState.NativeWindow = null;
@@ -130,7 +131,7 @@ export fn app_handle_cmd(app: [*c]xr.android_app, cmd: i32) void {
 // This is the main entry point of a native application that is using
 // android_native_app_glue.  It runs in its own thread, with its own
 // event loop for receiving input events and doing other things.
-export fn android_main(app: *xr.android_app) void {
+export fn android_main(app: *c.android_app) void {
     std.log.info("#### android_main ####", .{});
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -174,11 +175,11 @@ export fn android_main(app: *xr.android_app) void {
     defer program.deinit();
 
     // Initialize the loader for this platform
-    var initializeLoader: xr.PFN_xrInitializeLoaderKHR = null;
-    const res = xr.xrGetInstanceProcAddr(null, "xrInitializeLoaderKHR", &initializeLoader);
-    if (res == xr.XR_SUCCESS) {
-        var loaderInitInfoAndroid = xr.XrLoaderInitInfoAndroidKHR{
-            .type = xr.XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR,
+    var initializeLoader: c.PFN_xrInitializeLoaderKHR = null;
+    const res = c.xrGetInstanceProcAddr(null, "xrInitializeLoaderKHR", &initializeLoader);
+    if (res == c.XR_SUCCESS) {
+        var loaderInitInfoAndroid = c.XrLoaderInitInfoAndroidKHR{
+            .type = c.XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR,
             .applicationVM = @ptrCast(app.*.activity.*.vm),
             .applicationContext = @ptrCast(app.*.activity.*.clazz),
         };
@@ -189,10 +190,10 @@ export fn android_main(app: *xr.android_app) void {
     std.log.debug("xrInitializeLoaderKHR", .{});
 
     const INSTANCE_EXTENSIONS = [_][]const u8{
-        xr.XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
+        c.XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
     };
-    var create_info: xr.XrInstanceCreateInfoAndroidKHR = .{
-        .type = xr.XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR,
+    var create_info: c.XrInstanceCreateInfoAndroidKHR = .{
+        .type = c.XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR,
         .next = null,
         .applicationVM = @ptrCast(app.activity.*.vm),
         .applicationActivity = @ptrCast(app.activity.*.clazz),
@@ -227,7 +228,7 @@ export fn android_main(app: *xr.android_app) void {
         xr_util.my_panic("createSwapchains", .{});
     };
 
-    var scene = Scene.init(allocator, program.session) catch {
+    var scene = Scene.init(allocator, program.instance, program.session) catch {
         xr_util.my_panic("Scene.init", .{});
     };
     defer scene.deinit();
@@ -263,19 +264,19 @@ export fn android_main(app: *xr.android_app) void {
                     -1
                 else
                     0;
-            if (xr.ALooper_pollAll(timeoutMilliseconds, null, &events, &_source) < 0) {
+            if (c.ALooper_pollAll(timeoutMilliseconds, null, &events, &_source) < 0) {
                 break;
             }
 
             // Process this event.
-            xr.call_source_process(app, @ptrCast(@alignCast(_source)));
+            c.call_source_process(app, @ptrCast(@alignCast(_source)));
         }
 
         program.pollEvents(&exitRenderLoop, &requestRestart) catch {
             xr_util.my_panic("pollEvents", .{});
         };
         if (exitRenderLoop) {
-            xr.ANativeActivity_finish(app.activity);
+            c.ANativeActivity_finish(app.activity);
             continue;
         }
 
@@ -356,6 +357,7 @@ export fn android_main(app: *xr.android_app) void {
                                     image.image,
                                     @intCast(viewSwapchain.width),
                                     @intCast(viewSwapchain.height),
+                                    .{ 0, 0, 0, 0 },
                                     program.graphics.calcViewProjectionMatrix(view.fov, view.pose),
                                     cubes,
                                 ),
@@ -376,7 +378,7 @@ export fn android_main(app: *xr.android_app) void {
                 }
             }
         }
-        program.endFrame(space, frame_state.predictedDisplayTime, projectionLayerViews.items) catch |e| {
+        program.endFrame(space, frame_state.predictedDisplayTime, projectionLayerViews.items, null) catch |e| {
             std.log.err("program.endFrame: {s}", .{@errorName(e)});
         };
     }
